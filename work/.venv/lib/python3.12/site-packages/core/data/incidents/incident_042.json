@@ -1,0 +1,37 @@
+{
+  "schema_version": "0.2",
+  "decision_id": "incident_042",
+  "occurred_at_unix_ns": 1784389338392123456,
+  "source_module": "local_planner",
+  "action": "emergency_stop",
+  "rule": "min_clearance_violated",
+  "evidence": {
+    "clearance": {
+      "label": "Frontal Clearance",
+      "description": "Distance to the nearest detected obstacle in the projected path.",
+      "value": 0.42,
+      "expected": null,
+      "observed": 0.42,
+      "threshold": 0.50,
+      "unit": "m"
+    },
+    "confidence": {
+      "label": "Obstacle Confidence",
+      "description": "Lidar point cloud density confidence for the detected obstacle.",
+      "value": 0.95,
+      "expected": null,
+      "observed": 0.95,
+      "threshold": 0.80,
+      "unit": "probability"
+    }
+  },
+  "spatial_context": {
+    "map_id": "warehouse_zone_c",
+    "frame_id": "map",
+    "pose": {
+      "x": 42.15,
+      "y": -12.33,
+      "yaw": 1.5708
+    }
+  }
+}

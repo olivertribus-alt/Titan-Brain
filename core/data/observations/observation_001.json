@@ -1,0 +1,13 @@
+{
+  "timestamp_ns": 1784389338392123456,
+  "map_id": "warehouse_zone_c",
+  "frame_id": "map",
+  "pose": {
+    "x": 42.15,
+    "y": -12.33,
+    "yaw": 1.5708
+  },
+  "clearance_m": 0.32,
+  "confidence": 0.95,
+  "sensor_id": "front_lidar"
+}
