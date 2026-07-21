@@ -12,6 +12,7 @@ setup(
             [f"resource/{PACKAGE_NAME}"],
         ),
         (f"share/{PACKAGE_NAME}", ["package.xml"]),
+        (f"share/{PACKAGE_NAME}/config", ["config/velocity_arbiter.yaml"]),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -23,6 +24,8 @@ setup(
         "console_scripts": [
             "safety_observation_node = "
             "titan_brain_ros.safety_observation_node:main",
+            "velocity_arbiter_node = "
+            "titan_brain_ros.velocity_arbiter_node:main",
         ],
     },
 )

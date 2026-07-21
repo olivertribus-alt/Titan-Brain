@@ -57,6 +57,15 @@ def test_titan_brain_message_contracts_are_explicit() -> None:
         "bool is_incident",
         "string detail",
     ]
+    assert _message_fields(messages / "ArbitrationStatus.msg") == [
+        "uint8 MODE_PASS_THROUGH=0",
+        "uint8 MODE_CLAMPED=1",
+        "uint8 MODE_FORCED_ZERO=2",
+        "std_msgs/Header header",
+        "uint8 mode",
+        "string reason",
+        "geometry_msgs/Twist commanded_twist",
+    ]
 
 
 def test_message_package_declares_rosidl_and_message_dependencies() -> None:
@@ -74,6 +83,7 @@ def test_message_package_declares_rosidl_and_message_dependencies() -> None:
     assert "rosidl_generate_interfaces(${PROJECT_NAME}" in cmake
     assert '"msg/SafetyObservation.msg"' in cmake
     assert '"msg/SafetyEvaluationStatus.msg"' in cmake
+    assert '"msg/ArbitrationStatus.msg"' in cmake
 
 
 def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
@@ -89,10 +99,28 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
         "titan_brain_ros.safety_observation_node:main"
         in setup
     )
+    assert "titan_brain_ros.velocity_arbiter_node:main" in setup
     assert (package / "resource" / "titan_brain_ros").is_file()
     assert (
         package / "titan_brain_ros" / "safety_observation_node.py"
     ).is_file()
+    assert (
+        package / "titan_brain_ros" / "velocity_arbiter_node.py"
+    ).is_file()
+    velocity_config = package / "config" / "velocity_arbiter.yaml"
+    assert velocity_config.is_file()
+    config_text = velocity_config.read_text(encoding="utf-8")
+    for required_parameter in (
+        "policy_version",
+        "output_frame_id",
+        "command_stale_threshold_sec",
+        "safety_stale_threshold_sec",
+        "timer_period_sec",
+        "max_abs_linear_x",
+        "max_abs_linear_y",
+        "max_abs_angular_z",
+    ):
+        assert f"{required_parameter}:" in config_text
 
 
 def test_ci_contains_a_real_jazzy_runtime_gate() -> None:
@@ -103,7 +131,7 @@ def test_ci_contains_a_real_jazzy_runtime_gate() -> None:
     assert "ros-tooling/setup-ros@v0.7" in workflow
     assert "required-ros-distributions: jazzy" in workflow
     assert "colcon --log-base ros2_ws/log build" in workflow
-    assert "test_safety_observation_node.py" in workflow
+    assert "ros2_ws/src/titan_brain_ros/test" in workflow
     assert "python3 -m venv --system-site-packages" in workflow
     assert '"${TB_CI_VENV}/bin/python" -m pip install -e "."' in workflow
     assert '"${TB_CI_VENV}/bin/python" -m pytest' in workflow
