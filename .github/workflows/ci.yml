@@ -74,6 +74,7 @@ jobs:
           python3 -m venv --system-site-packages "${TB_CI_VENV}"
           "${TB_CI_VENV}/bin/python" -m pip install --upgrade pip
           "${TB_CI_VENV}/bin/python" -m pip install -e ".[dev]"
+          source /opt/ros/jazzy/setup.bash
           "${TB_CI_VENV}/bin/python" -c "import pydantic, rclpy"
 
       - name: Install ROS package dependencies
