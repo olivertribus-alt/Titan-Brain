@@ -104,5 +104,5 @@ jobs:
           source /opt/ros/jazzy/setup.bash
           source ros2_ws/install/setup.bash
           "${TB_CI_VENV}/bin/python" -m pytest \
-            ros2_ws/src/titan_brain_ros/test/test_safety_observation_node.py \
+            ros2_ws/src/titan_brain_ros/test \
             -q

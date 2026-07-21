@@ -2,7 +2,7 @@
 <package format="3">
   <name>titan_brain_ros</name>
   <version>0.1.0</version>
-  <description>ROS 2 Jazzy node wrapper for Titan Brain safety evaluation.</description>
+  <description>ROS 2 Jazzy transport for Titan Brain safety and velocity arbitration.</description>
   <maintainer email="olivertribus-alt@users.noreply.github.com">Oliver Tribus</maintainer>
   <license>Apache-2.0</license>
 
