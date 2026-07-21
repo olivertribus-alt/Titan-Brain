@@ -35,7 +35,7 @@ _PACKAGE_NAME = "titan_brain_ros"
 _DISCOVERY_TIMEOUT_SEC = 10.0
 _SCENARIO_TIMEOUT_SEC = 5.0
 _DRIVER_POLL_PERIOD_SEC = 0.005
-_OBSERVATION_PERIOD_NS = 20_000_000
+_INPUT_STREAM_PERIOD_NS = 20_000_000
 _CI_STOP_DEADLINE_NS = 250_000_000
 
 
@@ -156,7 +156,7 @@ class TestTitanBrainTransport(unittest.TestCase):
         *,
         timeout_sec: float = _SCENARIO_TIMEOUT_SEC,
         on_cycle: Callable[[], None] | None = None,
-        failure_message: str,
+        failure_message: str | Callable[[], str],
     ) -> None:
         deadline = time.monotonic() + timeout_sec
         while time.monotonic() < deadline:
@@ -169,7 +169,8 @@ class TestTitanBrainTransport(unittest.TestCase):
             time.sleep(_DRIVER_POLL_PERIOD_SEC)
         if predicate():
             return
-        self.fail(failure_message)
+        detail = failure_message() if callable(failure_message) else failure_message
+        self.fail(detail)
 
     def _publish_observation(self, *, clearance_m: float) -> None:
         message = SafetyObservation()
@@ -191,44 +192,104 @@ class TestTitanBrainTransport(unittest.TestCase):
         message.angular.z = 0.5
         self.navigation_publisher.publish(message)
 
-    def _stream_until_evaluation(
+    def _periodic_stream(
         self,
-        action: str,
-        *,
-        clearance_m: float,
-    ) -> int:
-        """Stream best-effort samples and return the first publication time."""
-        first_published_at_ns: int | None = None
+        publish: Callable[[], None],
+    ) -> Callable[[], None]:
+        """Return a non-blocking 50 Hz publisher callback."""
         next_publish_at_ns = 0
 
-        def publish_sensor_sample() -> None:
-            nonlocal first_published_at_ns, next_publish_at_ns
+        def publish_if_due() -> None:
+            nonlocal next_publish_at_ns
             now_ns = time.monotonic_ns()
             if now_ns < next_publish_at_ns:
                 return
-            if first_published_at_ns is None:
-                first_published_at_ns = now_ns
+            publish()
+            next_publish_at_ns = now_ns + _INPUT_STREAM_PERIOD_NS
+
+        return publish_if_due
+
+    def _transport_diagnostics(self) -> str:
+        evaluation_states = [
+            (
+                message.adapter_status,
+                message.watchdog_status,
+                message.observation_accepted,
+                message.action,
+            )
+            for message in self.evaluation_events[-10:]
+        ]
+        arbitration_reasons = [
+            message.reason for message, _received_at_ns in self.arbitration_events[-20:]
+        ]
+        return (
+            f"recent evaluations={evaluation_states!r}; "
+            f"recent arbitration reasons={arbitration_reasons!r}"
+        )
+
+    def _stream_inputs_until_arbitration(
+        self,
+        *,
+        clearance_m: float,
+        evaluation_action: str,
+        arbitration_reason: str,
+    ) -> int:
+        """Keep both independent inputs fresh until their result is observed."""
+        first_observation_at_ns: int | None = None
+
+        def publish_observation() -> None:
+            nonlocal first_observation_at_ns
+            if first_observation_at_ns is None:
+                first_observation_at_ns = time.monotonic_ns()
             self._publish_observation(clearance_m=clearance_m)
-            next_publish_at_ns = now_ns + _OBSERVATION_PERIOD_NS
+
+        observation_stream = self._periodic_stream(publish_observation)
+        navigation_stream = self._periodic_stream(
+            self._publish_navigation_command
+        )
+
+        def keep_inputs_fresh() -> None:
+            observation_stream()
+            navigation_stream()
 
         self._wait_for(
-            lambda: any(
-                message.observation_accepted and message.action == action
-                for message in self.evaluation_events
+            lambda: (
+                any(
+                    message.observation_accepted
+                    and message.action == evaluation_action
+                    for message in self.evaluation_events
+                )
+                and any(
+                    message.reason == arbitration_reason
+                    for message, _received_at_ns in self.arbitration_events
+                )
             ),
-            on_cycle=publish_sensor_sample,
-            failure_message=f"No accepted {action!r} evaluation was received.",
+            on_cycle=keep_inputs_fresh,
+            failure_message=lambda: (
+                "No synchronized "
+                f"{evaluation_action!r}/{arbitration_reason!r} result was "
+                f"received; {self._transport_diagnostics()}"
+            ),
         )
-        assert first_published_at_ns is not None
-        return first_published_at_ns
+        assert first_observation_at_ns is not None
+        return first_observation_at_ns
 
-    def _wait_for_arbitration_reason(self, reason: str) -> None:
+    def _wait_for_arbitration_reason(
+        self,
+        reason: str,
+        *,
+        on_cycle: Callable[[], None] | None = None,
+    ) -> None:
         self._wait_for(
             lambda: any(
                 message.reason == reason
                 for message, _received_at_ns in self.arbitration_events
             ),
-            failure_message=f"No {reason!r} arbitration result was received.",
+            on_cycle=on_cycle,
+            failure_message=lambda: (
+                f"No {reason!r} arbitration result was received; "
+                f"{self._transport_diagnostics()}"
+            ),
         )
 
     def _clear_events(self) -> None:
@@ -266,9 +327,11 @@ class TestTitanBrainTransport(unittest.TestCase):
 
         with self.subTest("safe_observation_passes_command"):
             self._clear_events()
-            self._stream_until_evaluation("proceed", clearance_m=1.2)
-            self._publish_navigation_command()
-            self._wait_for_arbitration_reason("proceed")
+            self._stream_inputs_until_arbitration(
+                clearance_m=1.2,
+                evaluation_action="proceed",
+                arbitration_reason="proceed",
+            )
             self._wait_for(
                 lambda: any(
                     message.linear.x == 0.4
@@ -281,11 +344,11 @@ class TestTitanBrainTransport(unittest.TestCase):
 
         with self.subTest("emergency_stop_meets_ci_deadline"):
             self._clear_events()
-            published_at_ns = self._stream_until_evaluation(
-                "emergency_stop",
+            published_at_ns = self._stream_inputs_until_arbitration(
                 clearance_m=0.2,
+                evaluation_action="emergency_stop",
+                arbitration_reason="emergency_stop",
             )
-            self._wait_for_arbitration_reason("emergency_stop")
             stop_status, received_at_ns = next(
                 event
                 for event in self.arbitration_events
@@ -314,12 +377,20 @@ class TestTitanBrainTransport(unittest.TestCase):
 
         with self.subTest("navigation_command_becomes_stale"):
             self._clear_events()
-            self._stream_until_evaluation("proceed", clearance_m=1.2)
-            self._publish_navigation_command()
-            self._wait_for_arbitration_reason("proceed")
+            self._stream_inputs_until_arbitration(
+                clearance_m=1.2,
+                evaluation_action="proceed",
+                arbitration_reason="proceed",
+            )
             self.arbitration_events.clear()
             self.cmd_vel_events.clear()
-            self._wait_for_arbitration_reason("command_stale")
+            observation_stream = self._periodic_stream(
+                lambda: self._publish_observation(clearance_m=1.2)
+            )
+            self._wait_for_arbitration_reason(
+                "command_stale",
+                on_cycle=observation_stream,
+            )
             stale_status = next(
                 message
                 for message, _received_at_ns in self.arbitration_events
@@ -329,28 +400,19 @@ class TestTitanBrainTransport(unittest.TestCase):
 
         with self.subTest("observation_watchdog_times_out"):
             self._clear_events()
-            self._stream_until_evaluation("proceed", clearance_m=1.2)
-            self._publish_navigation_command()
-            self._wait_for_arbitration_reason("proceed")
+            self._stream_inputs_until_arbitration(
+                clearance_m=1.2,
+                evaluation_action="proceed",
+                arbitration_reason="proceed",
+            )
             self.arbitration_events.clear()
             self.cmd_vel_events.clear()
-
-            next_command_at = time.monotonic()
-
-            def keep_navigation_fresh() -> None:
-                nonlocal next_command_at
-                now = time.monotonic()
-                if now >= next_command_at:
-                    self._publish_navigation_command()
-                    next_command_at = now + 0.03
-
-            self._wait_for(
-                lambda: any(
-                    message.reason == "watchdog_timed_out"
-                    for message, _received_at_ns in self.arbitration_events
-                ),
-                on_cycle=keep_navigation_fresh,
-                failure_message="Observation watchdog did not force zero.",
+            navigation_stream = self._periodic_stream(
+                self._publish_navigation_command
+            )
+            self._wait_for_arbitration_reason(
+                "watchdog_timed_out",
+                on_cycle=navigation_stream,
             )
             timeout_status = next(
                 message
