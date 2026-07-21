@@ -68,3 +68,6 @@ def test_constraints_pin_all_direct_project_and_quality_dependencies() -> None:
 
     for package in ("pydantic", "mypy", "pytest", "pytest-cov", "ruff"):
         assert f"{package}==" in constraints
+
+    # ROS 2 Jazzy launch_testing still uses the hook argument removed in pytest 9.
+    assert "pytest==8.4.2" in constraints
