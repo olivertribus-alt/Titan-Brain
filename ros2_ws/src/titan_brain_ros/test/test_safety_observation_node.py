@@ -1,0 +1,51 @@
+"""ROS 2 Jazzy runtime tests for SafetyObservationNode."""
+
+from __future__ import annotations
+
+import rclpy
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, ReliabilityPolicy
+from titan_brain_msgs.msg import SafetyObservation
+from titan_brain_ros.safety_observation_node import (
+    SafetyObservationNode,
+    sensor_data_qos_profile,
+    status_qos_profile,
+)
+
+
+def test_qos_contracts() -> None:
+    sensor_qos = sensor_data_qos_profile()
+    status_qos = status_qos_profile()
+
+    assert sensor_qos.history == HistoryPolicy.KEEP_LAST
+    assert sensor_qos.depth == 5
+    assert sensor_qos.reliability == ReliabilityPolicy.BEST_EFFORT
+    assert sensor_qos.durability == DurabilityPolicy.VOLATILE
+    assert status_qos.history == HistoryPolicy.KEEP_LAST
+    assert status_qos.depth == 10
+    assert status_qos.reliability == ReliabilityPolicy.RELIABLE
+    assert status_qos.durability == DurabilityPolicy.VOLATILE
+
+
+def test_node_accepts_normalized_observation_in_target_frame() -> None:
+    rclpy.init()
+    node = SafetyObservationNode()
+    try:
+        message = SafetyObservation()
+        message.header.stamp = node.get_clock().now().to_msg()
+        message.header.frame_id = "map"
+        message.map_id = "warehouse_zone_c"
+        message.pose.x = 1.0
+        message.pose.y = 2.0
+        message.pose.theta = 0.25
+        message.clearance_m = 1.2
+        message.confidence = 0.95
+        message.sensor_id = "front_lidar"
+
+        node._on_observation(message)
+
+        assert node.adapter.last_valid_received_at_ns is not None
+        assert node.count_publishers("/safety/evaluation_status") == 1
+        assert node.count_subscribers("/safety/observation") == 1
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
