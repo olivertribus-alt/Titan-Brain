@@ -32,6 +32,7 @@ from titan_brain_msgs.msg import (
 _PACKAGE_NAME = "titan_brain_ros"
 _DISCOVERY_TIMEOUT_SEC = 10.0
 _SCENARIO_TIMEOUT_SEC = 5.0
+_OBSERVATION_PERIOD_NS = 20_000_000
 _CI_STOP_DEADLINE_NS = 250_000_000
 
 
@@ -171,14 +172,36 @@ class TestTitanBrainTransport(unittest.TestCase):
         message.angular.z = 0.5
         self.navigation_publisher.publish(message)
 
-    def _wait_for_evaluation(self, action: str) -> None:
+    def _stream_until_evaluation(
+        self,
+        action: str,
+        *,
+        clearance_m: float,
+    ) -> int:
+        """Stream best-effort samples and return the first publication time."""
+        first_published_at_ns: int | None = None
+        next_publish_at_ns = 0
+
+        def publish_sensor_sample() -> None:
+            nonlocal first_published_at_ns, next_publish_at_ns
+            now_ns = time.monotonic_ns()
+            if now_ns < next_publish_at_ns:
+                return
+            if first_published_at_ns is None:
+                first_published_at_ns = now_ns
+            self._publish_observation(clearance_m=clearance_m)
+            next_publish_at_ns = now_ns + _OBSERVATION_PERIOD_NS
+
         self._wait_for(
             lambda: any(
                 message.observation_accepted and message.action == action
                 for message in self.evaluation_events
             ),
+            on_cycle=publish_sensor_sample,
             failure_message=f"No accepted {action!r} evaluation was received.",
         )
+        assert first_published_at_ns is not None
+        return first_published_at_ns
 
     def _wait_for_arbitration_reason(self, reason: str) -> None:
         self._wait_for(
@@ -224,8 +247,7 @@ class TestTitanBrainTransport(unittest.TestCase):
 
         with self.subTest("safe_observation_passes_command"):
             self._clear_events()
-            self._publish_observation(clearance_m=1.2)
-            self._wait_for_evaluation("proceed")
+            self._stream_until_evaluation("proceed", clearance_m=1.2)
             self._publish_navigation_command()
             self._wait_for_arbitration_reason("proceed")
             self._wait_for(
@@ -240,8 +262,10 @@ class TestTitanBrainTransport(unittest.TestCase):
 
         with self.subTest("emergency_stop_meets_ci_deadline"):
             self._clear_events()
-            published_at_ns = time.monotonic_ns()
-            self._publish_observation(clearance_m=0.2)
+            published_at_ns = self._stream_until_evaluation(
+                "emergency_stop",
+                clearance_m=0.2,
+            )
             self._wait_for_arbitration_reason("emergency_stop")
             stop_status, received_at_ns = next(
                 event
@@ -271,8 +295,7 @@ class TestTitanBrainTransport(unittest.TestCase):
 
         with self.subTest("navigation_command_becomes_stale"):
             self._clear_events()
-            self._publish_observation(clearance_m=1.2)
-            self._wait_for_evaluation("proceed")
+            self._stream_until_evaluation("proceed", clearance_m=1.2)
             self._publish_navigation_command()
             self._wait_for_arbitration_reason("proceed")
             self.arbitration_events.clear()
@@ -287,8 +310,7 @@ class TestTitanBrainTransport(unittest.TestCase):
 
         with self.subTest("observation_watchdog_times_out"):
             self._clear_events()
-            self._publish_observation(clearance_m=1.2)
-            self._wait_for_evaluation("proceed")
+            self._stream_until_evaluation("proceed", clearance_m=1.2)
             self._publish_navigation_command()
             self._wait_for_arbitration_reason("proceed")
             self.arbitration_events.clear()
