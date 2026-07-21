@@ -16,6 +16,7 @@ from core.adapters.ros_observation import (
     WatchdogStatus,
     adapt_ros_observation,
 )
+from core.braking import BrakingEnvelopeConfig
 from core.incident_store import FileIncidentStore
 from core.safety import SafetyRuleConfig, evaluate_safety
 
@@ -41,6 +42,28 @@ def _message(
         "confidence": confidence,
         "sensor_id": "front_lidar",
     }
+
+
+def _dynamic_message(
+    *,
+    clearance_m: float,
+    linear_x_mps: float,
+) -> dict[str, object]:
+    message = _message(clearance_m=clearance_m)
+    message["directional_data"] = {
+        "clearances": {
+            "forward_m": clearance_m,
+            "reverse_m": 10.0,
+            "left_m": 10.0,
+            "right_m": 10.0,
+        },
+        "velocity": {
+            "linear_x_mps": linear_x_mps,
+            "linear_y_mps": 0.0,
+            "angular_z_radps": 0.0,
+        },
+    }
+    return message
 
 
 def test_valid_message_is_adapted_evaluated_and_persisted(tmp_path: Path) -> None:
@@ -87,6 +110,73 @@ def test_explicit_safety_rules_are_forwarded_to_existing_evaluator(
     assert result.decision is not None
     assert result.decision.decision.action == "proceed"
     assert result.decision.decision.evidence["clearance"].threshold == 0.25
+
+
+def test_dynamic_braking_rules_are_forwarded_to_evaluator(
+    tmp_path: Path,
+) -> None:
+    rules = SafetyRuleConfig(
+        policy_version="TB-SAFE-0.2.0",
+        braking_envelope=BrakingEnvelopeConfig(
+            policy_version="TB-BRAKE-0.2.0",
+            reaction_time_ns=250_000_000,
+            assured_deceleration_mps2=1.0,
+            clearance_margin_m=0.5,
+        ),
+    )
+    adapter = RosObservationAdapter(
+        FileIncidentStore(tmp_path),
+        safety_rules=rules,
+    )
+
+    result = adapter.process(
+        _dynamic_message(clearance_m=0.8, linear_x_mps=0.8),
+        now_ns=NOW_NS,
+    )
+
+    assert result.decision is not None
+    assert result.decision.decision.action == "emergency_stop"
+    assert result.decision.decision.rule == "EV-SAFE-DYN-01"
+
+
+def test_dynamic_mode_fails_closed_for_legacy_message(tmp_path: Path) -> None:
+    rules = SafetyRuleConfig(
+        braking_envelope=BrakingEnvelopeConfig(
+            policy_version="TB-BRAKE-0.2.0",
+            reaction_time_ns=250_000_000,
+            assured_deceleration_mps2=1.0,
+            clearance_margin_m=0.5,
+        )
+    )
+    adapter = RosObservationAdapter(
+        FileIncidentStore(tmp_path),
+        safety_rules=rules,
+    )
+
+    result = adapter.process(_message(clearance_m=1.2), now_ns=NOW_NS)
+
+    assert result.decision is not None
+    assert result.decision.decision.action == "protective_stop"
+    assert result.decision.decision.rule == "EV-SAFE-DYN-03"
+
+
+def test_contradictory_dynamic_clearance_is_rejected_before_evaluation(
+    tmp_path: Path,
+) -> None:
+    adapter = RosObservationAdapter(FileIncidentStore(tmp_path))
+    message = _dynamic_message(clearance_m=0.8, linear_x_mps=0.1)
+    directional = message["directional_data"]
+    assert isinstance(directional, dict)
+    clearances = directional["clearances"]
+    assert isinstance(clearances, dict)
+    clearances["forward_m"] = 0.9
+
+    result = adapter.process(message, now_ns=NOW_NS)
+
+    assert result.adaptation.status is ObservationAdaptationStatus.INVALID_MESSAGE
+    assert result.adaptation.detail == "Message contains contradictory safety data."
+    assert result.decision is None
+    assert adapter.last_valid_received_at_ns is None
 
 
 @pytest.mark.parametrize(

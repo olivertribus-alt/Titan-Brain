@@ -46,6 +46,7 @@ def test_node_accepts_normalized_observation_in_target_frame() -> None:
         assert node.adapter.last_valid_received_at_ns is not None
         assert node.count_publishers("/safety/evaluation_status") == 1
         assert node.count_subscribers("/safety/observation") == 1
+        assert node.count_subscribers("/safety/directional_observation") == 1
     finally:
         node.destroy_node()
         rclpy.shutdown()

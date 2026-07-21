@@ -9,6 +9,7 @@ import rclpy
 from pydantic import ValidationError
 from rclpy.duration import Duration
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from rclpy.qos import (
     DurabilityPolicy,
     HistoryPolicy,
@@ -17,6 +18,9 @@ from rclpy.qos import (
 )
 from rclpy.time import Time
 from tf2_ros import Buffer, TransformException, TransformListener
+from titan_brain_msgs.msg import (
+    DirectionalSafetyObservation as DirectionalSafetyObservationMsg,
+)
 from titan_brain_msgs.msg import SafetyEvaluationStatus as SafetyEvaluationStatusMsg
 from titan_brain_msgs.msg import SafetyObservation as SafetyObservationMsg
 
@@ -31,10 +35,13 @@ from core.adapters.ros_observation import (
     RosObservationProcessingResult,
     WatchdogReport,
 )
+from core.braking import BrakingEnvelopeConfig
 from core.incident_store import FileIncidentStore, IncidentStoreError
+from core.safety import SafetyRuleConfig
 from core.types.incident import Pose2D
 
 _STATUS_SCHEMA_VERSION = "0.1"
+ObservationMessage = SafetyObservationMsg | DirectionalSafetyObservationMsg
 
 
 def sensor_data_qos_profile() -> QoSProfile:
@@ -68,11 +75,58 @@ def _seconds_to_ns(value: float, *, name: str, allow_zero: bool = False) -> int:
     return nanoseconds
 
 
+def _required_text_parameter(node: Node, name: str) -> str:
+    value = node.declare_parameter(name, Parameter.Type.STRING).value
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"ROS parameter {name!r} must be a non-blank string")
+    return value
+
+
+def _required_finite_parameter(
+    node: Node,
+    name: str,
+    *,
+    allow_zero: bool,
+) -> float:
+    value = node.declare_parameter(name, Parameter.Type.DOUBLE).value
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"ROS parameter {name!r} must be numeric")
+    checked = float(value)
+    minimum_is_valid = checked >= 0.0 if allow_zero else checked > 0.0
+    if not math.isfinite(checked) or not minimum_is_valid:
+        qualifier = "non-negative" if allow_zero else "positive"
+        raise ValueError(
+            f"ROS parameter {name!r} must be finite and {qualifier}"
+        )
+    return checked
+
+
+def _required_probability_parameter(node: Node, name: str) -> float:
+    value = _required_finite_parameter(node, name, allow_zero=True)
+    if value > 1.0:
+        raise ValueError(f"ROS parameter {name!r} must be at most 1.0")
+    return value
+
+
+def _required_positive_integer_parameter(node: Node, name: str) -> int:
+    value = node.declare_parameter(name, Parameter.Type.INTEGER).value
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"ROS parameter {name!r} must be a positive integer")
+    return value
+
+
 class SafetyObservationNode(Node):
     """Validate, transform, evaluate, and publish safety transport status."""
 
-    def __init__(self) -> None:
-        super().__init__("safety_observation_node")
+    def __init__(
+        self,
+        *,
+        parameter_overrides: list[Parameter] | None = None,
+    ) -> None:
+        super().__init__(
+            "safety_observation_node",
+            parameter_overrides=parameter_overrides,
+        )
 
         target_frame = str(self.declare_parameter("target_frame", "map").value)
         max_age_sec = float(
@@ -98,6 +152,47 @@ class SafetyObservationNode(Node):
         )
         if not incident_store_path.strip():
             raise ValueError("incident_store_path must not be blank")
+
+        dynamic_braking_enabled = bool(
+            self.declare_parameter("dynamic_braking_enabled", False).value
+        )
+        safety_rules: SafetyRuleConfig | None = None
+        if dynamic_braking_enabled:
+            safety_rules = SafetyRuleConfig(
+                policy_version=_required_text_parameter(
+                    self,
+                    "safety_policy_version",
+                ),
+                clearance_threshold_m=_required_finite_parameter(
+                    self,
+                    "clearance_threshold_m",
+                    allow_zero=False,
+                ),
+                confidence_threshold=_required_probability_parameter(
+                    self,
+                    "confidence_threshold",
+                ),
+                braking_envelope=BrakingEnvelopeConfig(
+                    policy_version=_required_text_parameter(
+                        self,
+                        "braking_policy_version",
+                    ),
+                    reaction_time_ns=_required_positive_integer_parameter(
+                        self,
+                        "reaction_time_ns",
+                    ),
+                    assured_deceleration_mps2=_required_finite_parameter(
+                        self,
+                        "assured_deceleration_mps2",
+                        allow_zero=False,
+                    ),
+                    clearance_margin_m=_required_finite_parameter(
+                        self,
+                        "clearance_margin_m",
+                        allow_zero=True,
+                    ),
+                ),
+            )
 
         timer_period_ns = _seconds_to_ns(
             timer_period_sec,
@@ -127,6 +222,7 @@ class SafetyObservationNode(Node):
         self._adapter = RosObservationAdapter(
             FileIncidentStore(Path(incident_store_path)),
             config=adapter_config,
+            safety_rules=safety_rules,
         )
 
         self._tf_buffer = Buffer()
@@ -140,6 +236,12 @@ class SafetyObservationNode(Node):
             SafetyObservationMsg,
             "/safety/observation",
             self._on_observation,
+            sensor_data_qos_profile(),
+        )
+        self._directional_observation_subscription = self.create_subscription(
+            DirectionalSafetyObservationMsg,
+            "/safety/directional_observation",
+            self._on_directional_observation,
             sensor_data_qos_profile(),
         )
         self._watchdog_timer = self.create_timer(
@@ -157,7 +259,7 @@ class SafetyObservationNode(Node):
 
     def _transform_pose(
         self,
-        message: SafetyObservationMsg,
+        message: ObservationMessage,
     ) -> tuple[Pose2D, str]:
         source_frame = message.header.frame_id
         pose = Pose2D(
@@ -189,7 +291,7 @@ class SafetyObservationNode(Node):
 
     def _normalized_payload(
         self,
-        message: SafetyObservationMsg,
+        message: ObservationMessage,
         pose: Pose2D,
         frame_id: str,
     ) -> dict[str, object]:
@@ -206,7 +308,39 @@ class SafetyObservationNode(Node):
             "clearance_m": float(message.clearance_m),
             "confidence": float(message.confidence),
             "sensor_id": message.sensor_id,
+            "directional_data": None,
         }
+
+    def _normalized_directional_payload(
+        self,
+        message: DirectionalSafetyObservationMsg,
+        pose: Pose2D,
+        frame_id: str,
+    ) -> dict[str, object]:
+        ignored_velocity_components = (
+            float(message.velocity.linear.z),
+            float(message.velocity.angular.x),
+            float(message.velocity.angular.y),
+        )
+        if any(component != 0.0 for component in ignored_velocity_components):
+            raise ValueError(
+                "Directional observation contains unsupported 3D velocity"
+            )
+        payload = self._normalized_payload(message, pose, frame_id)
+        payload["directional_data"] = {
+            "clearances": {
+                "forward_m": float(message.forward_clearance_m),
+                "reverse_m": float(message.reverse_clearance_m),
+                "left_m": float(message.left_clearance_m),
+                "right_m": float(message.right_clearance_m),
+            },
+            "velocity": {
+                "linear_x_mps": float(message.velocity.linear.x),
+                "linear_y_mps": float(message.velocity.linear.y),
+                "angular_z_radps": float(message.velocity.angular.z),
+            },
+        }
+        return payload
 
     def _base_status(
         self,
@@ -259,6 +393,20 @@ class SafetyObservationNode(Node):
         self._status_publisher.publish(status)
 
     def _on_observation(self, message: SafetyObservationMsg) -> None:
+        self._process_observation(message)
+
+    def _on_directional_observation(
+        self,
+        message: DirectionalSafetyObservationMsg,
+    ) -> None:
+        self._process_observation(message, directional_message=message)
+
+    def _process_observation(
+        self,
+        message: ObservationMessage,
+        *,
+        directional_message: DirectionalSafetyObservationMsg | None = None,
+    ) -> None:
         now = self.get_clock().now()
         try:
             pose, frame_id = self._transform_pose(message)
@@ -283,10 +431,26 @@ class SafetyObservationNode(Node):
             return
 
         try:
+            if directional_message is not None:
+                payload = self._normalized_directional_payload(
+                    directional_message,
+                    pose,
+                    frame_id,
+                )
+            else:
+                payload = self._normalized_payload(message, pose, frame_id)
             result = self._adapter.process(
-                self._normalized_payload(message, pose, frame_id),
+                payload,
                 now_ns=now.nanoseconds,
             )
+        except (ValidationError, ValueError) as error:
+            self.get_logger().warning(f"Observation payload rejected: {error}")
+            self._publish_transport_failure(
+                now,
+                adapter_status="invalid_observation",
+                detail="Observation contains invalid directional data.",
+            )
+            return
         except IncidentStoreError as error:
             self.get_logger().error(f"Incident store failure: {error}")
             self._publish_transport_failure(

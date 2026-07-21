@@ -27,6 +27,7 @@ from rclpy.qos import (
 )
 from titan_brain_msgs.msg import (
     ArbitrationStatus,
+    DirectionalSafetyObservation,
     SafetyEvaluationStatus,
     SafetyObservation,
 )
@@ -93,6 +94,11 @@ class TestTitanBrainTransport(unittest.TestCase):
         cls.evaluation_events: list[SafetyEvaluationStatus] = []
 
         cls.observation_publisher = cls.node.create_publisher(
+            DirectionalSafetyObservation,
+            "/safety/directional_observation",
+            _sensor_qos(),
+        )
+        cls.legacy_observation_publisher = cls.node.create_publisher(
             SafetyObservation,
             "/safety/observation",
             _sensor_qos(),
@@ -172,8 +178,16 @@ class TestTitanBrainTransport(unittest.TestCase):
         detail = failure_message() if callable(failure_message) else failure_message
         self.fail(detail)
 
-    def _publish_observation(self, *, clearance_m: float) -> None:
-        message = SafetyObservation()
+    def _publish_observation(
+        self,
+        *,
+        clearance_m: float,
+        linear_x_mps: float = 0.4,
+        reverse_clearance_m: float = 10.0,
+        left_clearance_m: float = 10.0,
+        right_clearance_m: float = 10.0,
+    ) -> None:
+        message = DirectionalSafetyObservation()
         message.header.stamp = self.node.get_clock().now().to_msg()
         message.header.frame_id = "map"
         message.map_id = "e2e_test_map"
@@ -183,14 +197,34 @@ class TestTitanBrainTransport(unittest.TestCase):
         message.clearance_m = clearance_m
         message.confidence = 0.95
         message.sensor_id = "e2e_front_lidar"
+        message.forward_clearance_m = clearance_m
+        message.reverse_clearance_m = reverse_clearance_m
+        message.left_clearance_m = left_clearance_m
+        message.right_clearance_m = right_clearance_m
+        message.velocity.linear.x = linear_x_mps
+        message.velocity.linear.y = 0.0
+        message.velocity.angular.z = 0.0
         self.observation_publisher.publish(message)
 
-    def _publish_navigation_command(self) -> None:
+    def _publish_navigation_command(self, *, linear_x_mps: float = 0.4) -> None:
         message = Twist()
-        message.linear.x = 0.4
-        message.linear.y = 0.1
-        message.angular.z = 0.5
+        message.linear.x = linear_x_mps
+        message.linear.y = 0.0
+        message.angular.z = 0.0
         self.navigation_publisher.publish(message)
+
+    def _publish_legacy_observation(self, *, clearance_m: float) -> None:
+        message = SafetyObservation()
+        message.header.stamp = self.node.get_clock().now().to_msg()
+        message.header.frame_id = "map"
+        message.map_id = "e2e_test_map"
+        message.pose.x = 1.0
+        message.pose.y = 2.0
+        message.pose.theta = 0.0
+        message.clearance_m = clearance_m
+        message.confidence = 0.95
+        message.sensor_id = "legacy_front_lidar"
+        self.legacy_observation_publisher.publish(message)
 
     def _periodic_stream(
         self,
@@ -233,6 +267,10 @@ class TestTitanBrainTransport(unittest.TestCase):
         clearance_m: float,
         evaluation_action: str,
         arbitration_reason: str,
+        linear_x_mps: float = 0.4,
+        reverse_clearance_m: float = 10.0,
+        left_clearance_m: float = 10.0,
+        right_clearance_m: float = 10.0,
     ) -> int:
         """Keep both independent inputs fresh until their result is observed."""
         first_observation_at_ns: int | None = None
@@ -241,11 +279,19 @@ class TestTitanBrainTransport(unittest.TestCase):
             nonlocal first_observation_at_ns
             if first_observation_at_ns is None:
                 first_observation_at_ns = time.monotonic_ns()
-            self._publish_observation(clearance_m=clearance_m)
+            self._publish_observation(
+                clearance_m=clearance_m,
+                linear_x_mps=linear_x_mps,
+                reverse_clearance_m=reverse_clearance_m,
+                left_clearance_m=left_clearance_m,
+                right_clearance_m=right_clearance_m,
+            )
 
         observation_stream = self._periodic_stream(publish_observation)
         navigation_stream = self._periodic_stream(
-            self._publish_navigation_command
+            lambda: self._publish_navigation_command(
+                linear_x_mps=linear_x_mps
+            )
         )
 
         def keep_inputs_fresh() -> None:
@@ -302,6 +348,8 @@ class TestTitanBrainTransport(unittest.TestCase):
         self._wait_for(
             lambda: (
                 self.observation_publisher.get_subscription_count() == 1
+                and self.legacy_observation_publisher.get_subscription_count()
+                == 1
                 and self.navigation_publisher.get_subscription_count() == 1
                 and self.node.count_publishers("/cmd_vel") == 1
                 and self.node.count_publishers("/safety/arbitration_status") == 1
@@ -335,11 +383,71 @@ class TestTitanBrainTransport(unittest.TestCase):
             self._wait_for(
                 lambda: any(
                     message.linear.x == 0.4
-                    and message.linear.y == 0.1
-                    and message.angular.z == 0.5
+                    and message.linear.y == 0.0
+                    and message.angular.z == 0.0
                     for message, _received_at_ns in self.cmd_vel_events
                 ),
                 failure_message="Pass-through command was not published.",
+            )
+
+        with self.subTest("speed_expands_forward_braking_envelope"):
+            self._clear_events()
+            self._stream_inputs_until_arbitration(
+                clearance_m=0.8,
+                linear_x_mps=0.1,
+                evaluation_action="proceed",
+                arbitration_reason="proceed",
+            )
+            self._clear_events()
+            self._stream_inputs_until_arbitration(
+                clearance_m=0.8,
+                linear_x_mps=0.8,
+                evaluation_action="emergency_stop",
+                arbitration_reason="emergency_stop",
+            )
+
+        with self.subTest("legacy_input_fails_closed_in_dynamic_mode"):
+            self._clear_events()
+            legacy_stream = self._periodic_stream(
+                lambda: self._publish_legacy_observation(clearance_m=1.2)
+            )
+            navigation_stream = self._periodic_stream(
+                self._publish_navigation_command
+            )
+
+            def keep_legacy_inputs_fresh() -> None:
+                legacy_stream()
+                navigation_stream()
+
+            self._wait_for(
+                lambda: (
+                    any(
+                        message.observation_accepted
+                        and message.rule == "EV-SAFE-DYN-03"
+                        and message.action == "protective_stop"
+                        for message in self.evaluation_events
+                    )
+                    and any(
+                        message.reason == "protective_stop"
+                        for message, _received_at_ns in self.arbitration_events
+                    )
+                ),
+                on_cycle=keep_legacy_inputs_fresh,
+                failure_message=lambda: (
+                    "Legacy observation did not fail closed in dynamic mode; "
+                    f"{self._transport_diagnostics()}"
+                ),
+            )
+
+        with self.subTest("inactive_sectors_do_not_block_forward_motion"):
+            self._clear_events()
+            self._stream_inputs_until_arbitration(
+                clearance_m=1.2,
+                reverse_clearance_m=0.01,
+                left_clearance_m=0.01,
+                right_clearance_m=0.01,
+                evaluation_action="proceed",
+                arbitration_reason="proceed",
             )
 
         with self.subTest("emergency_stop_meets_ci_deadline"):

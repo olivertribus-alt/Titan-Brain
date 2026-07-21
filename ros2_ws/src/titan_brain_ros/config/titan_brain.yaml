@@ -7,6 +7,14 @@ safety_observation_node:
     timer_period_sec: 0.02
     tf_timeout_sec: 0.05
     incident_store_path: "/tmp/titan_brain/incidents"
+    dynamic_braking_enabled: true
+    safety_policy_version: "TB-SAFE-0.2.0"
+    clearance_threshold_m: 0.50
+    confidence_threshold: 0.70
+    braking_policy_version: "TB-BRAKE-0.2.0"
+    reaction_time_ns: 250000000
+    assured_deceleration_mps2: 1.0
+    clearance_margin_m: 0.50
 
 velocity_arbiter_node:
   ros__parameters:

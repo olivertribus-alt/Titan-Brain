@@ -55,6 +55,19 @@ def test_titan_brain_message_contracts_are_explicit() -> None:
         "float64 confidence",
         "string sensor_id",
     ]
+    assert _message_fields(messages / "DirectionalSafetyObservation.msg") == [
+        "std_msgs/Header header",
+        "string map_id",
+        "geometry_msgs/Pose2D pose",
+        "float64 clearance_m",
+        "float64 confidence",
+        "string sensor_id",
+        "float64 forward_clearance_m",
+        "float64 reverse_clearance_m",
+        "float64 left_clearance_m",
+        "float64 right_clearance_m",
+        "geometry_msgs/Twist velocity",
+    ]
     assert _message_fields(messages / "SafetyEvaluationStatus.msg") == [
         "std_msgs/Header header",
         "string schema_version",
@@ -93,6 +106,7 @@ def test_message_package_declares_rosidl_and_message_dependencies() -> None:
     } <= dependencies
     assert "rosidl_generate_interfaces(${PROJECT_NAME}" in cmake
     assert '"msg/SafetyObservation.msg"' in cmake
+    assert '"msg/DirectionalSafetyObservation.msg"' in cmake
     assert '"msg/SafetyEvaluationStatus.msg"' in cmake
     assert '"msg/ArbitrationStatus.msg"' in cmake
 
@@ -145,6 +159,14 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
         "max_abs_linear_x",
         "max_abs_linear_y",
         "max_abs_angular_z",
+        "dynamic_braking_enabled",
+        "safety_policy_version",
+        "clearance_threshold_m",
+        "confidence_threshold",
+        "braking_policy_version",
+        "reaction_time_ns",
+        "assured_deceleration_mps2",
+        "clearance_margin_m",
     ):
         assert f"{required_parameter}:" in config_text
     max_observation_age_sec = _float_parameter(
@@ -158,6 +180,8 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert max_observation_age_sec == 0.20
     assert watchdog_timeout_sec == 0.20
     assert watchdog_timeout_sec >= max_observation_age_sec
+    assert "dynamic_braking_enabled: true" in config_text
+    assert "reaction_time_ns: 250000000" in config_text
     assert '"config/titan_brain.yaml"' in setup
     assert '"launch/titan_brain.launch.py"' in setup
     launch_text = launch_file.read_text(encoding="utf-8")
@@ -167,6 +191,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert 'parameters=[config_file]' in launch_text
     assert "@pytest.mark.launch_test" in e2e_text
     assert '"/safety/observation"' in e2e_text
+    assert '"/safety/directional_observation"' in e2e_text
     assert '"/cmd_vel_nav"' in e2e_text
     assert '"/cmd_vel"' in e2e_text
 
