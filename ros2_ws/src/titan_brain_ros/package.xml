@@ -6,8 +6,6 @@
   <maintainer email="olivertribus-alt@users.noreply.github.com">Oliver Tribus</maintainer>
   <license>Apache-2.0</license>
 
-  <buildtool_depend>ament_python</buildtool_depend>
-
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>std_msgs</exec_depend>

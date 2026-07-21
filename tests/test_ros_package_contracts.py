@@ -79,9 +79,12 @@ def test_message_package_declares_rosidl_and_message_dependencies() -> None:
 def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     package = ROS_SOURCE / "titan_brain_ros"
     dependencies = _package_dependencies(package / "package.xml")
+    manifest = (package / "package.xml").read_text(encoding="utf-8")
     setup = (package / "setup.py").read_text(encoding="utf-8")
 
     assert {"rclpy", "tf2_ros", "titan_brain_msgs"} <= dependencies
+    assert "ament_python" not in dependencies
+    assert "<build_type>ament_python</build_type>" in manifest
     assert (
         "titan_brain_ros.safety_observation_node:main"
         in setup
