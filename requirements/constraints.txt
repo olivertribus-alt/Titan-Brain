@@ -1,0 +1,7 @@
+# Direct Python dependencies resolved by the green Python 3.12 quality gate.
+# This constrains the supported toolchain; it is not a hash-locked transitive lockfile.
+pydantic==2.13.4
+mypy==2.3.0
+pytest==9.1.1
+pytest-cov==7.1.0
+ruff==0.15.22

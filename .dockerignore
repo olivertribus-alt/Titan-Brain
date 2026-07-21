@@ -1,0 +1,15 @@
+.git
+.coverage
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.venv
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+build
+dist
+ros2_ws/build
+ros2_ws/install
+ros2_ws/log
+work
