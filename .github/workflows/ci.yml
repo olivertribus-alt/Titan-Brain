@@ -54,6 +54,8 @@ jobs:
     container:
       image: ubuntu:noble
     timeout-minutes: 20
+    env:
+      TB_CI_VENV: /tmp/titan-brain-ci-venv
 
     steps:
       - name: Checkout code
@@ -64,10 +66,15 @@ jobs:
         with:
           required-ros-distributions: jazzy
 
-      - name: Install Titan Brain core and test dependencies
+      - name: Create isolated Python environment
         shell: bash
         run: |
-          python3 -m pip install --break-system-packages -e ".[dev]"
+          apt-get update
+          apt-get install --no-install-recommends -y python3-venv
+          python3 -m venv --system-site-packages "${TB_CI_VENV}"
+          "${TB_CI_VENV}/bin/python" -m pip install --upgrade pip
+          "${TB_CI_VENV}/bin/python" -m pip install -e ".[dev]"
+          "${TB_CI_VENV}/bin/python" -c "import pydantic, rclpy"
 
       - name: Install ROS package dependencies
         shell: bash
@@ -94,6 +101,6 @@ jobs:
         run: |
           source /opt/ros/jazzy/setup.bash
           source ros2_ws/install/setup.bash
-          python3 -m pytest \
+          "${TB_CI_VENV}/bin/python" -m pytest \
             ros2_ws/src/titan_brain_ros/test/test_safety_observation_node.py \
             -q
