@@ -92,7 +92,7 @@ jobs:
         shell: bash
         run: |
           source /opt/ros/jazzy/setup.bash
-          colcon --log-base ros2_ws/log build \
+          "${TB_CI_VENV}/bin/python" -m colcon --log-base ros2_ws/log build \
             --base-paths ros2_ws/src \
             --build-base ros2_ws/build \
             --install-base ros2_ws/install \

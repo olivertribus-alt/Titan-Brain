@@ -1,0 +1,20 @@
+safety_observation_node:
+  ros__parameters:
+    target_frame: "map"
+    max_observation_age_sec: 0.25
+    max_future_skew_sec: 0.0
+    watchdog_timeout_sec: 0.20
+    timer_period_sec: 0.02
+    tf_timeout_sec: 0.05
+    incident_store_path: "/tmp/titan_brain/incidents"
+
+velocity_arbiter_node:
+  ros__parameters:
+    policy_version: "TB-VEL-ARB-0.1.0"
+    output_frame_id: "base_link"
+    command_stale_threshold_sec: 0.10
+    safety_stale_threshold_sec: 0.25
+    timer_period_sec: 0.01
+    max_abs_linear_x: 0.8
+    max_abs_linear_y: 0.2
+    max_abs_angular_z: 1.5

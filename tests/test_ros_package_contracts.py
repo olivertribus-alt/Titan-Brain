@@ -92,7 +92,16 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     manifest = (package / "package.xml").read_text(encoding="utf-8")
     setup = (package / "setup.py").read_text(encoding="utf-8")
 
-    assert {"rclpy", "tf2_ros", "titan_brain_msgs"} <= dependencies
+    assert {
+        "ament_index_python",
+        "launch",
+        "launch_ros",
+        "launch_testing",
+        "launch_testing_ros",
+        "rclpy",
+        "tf2_ros",
+        "titan_brain_msgs",
+    } <= dependencies
     assert "ament_python" not in dependencies
     assert "<build_type>ament_python</build_type>" in manifest
     assert (
@@ -107,10 +116,16 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert (
         package / "titan_brain_ros" / "velocity_arbiter_node.py"
     ).is_file()
-    velocity_config = package / "config" / "velocity_arbiter.yaml"
-    assert velocity_config.is_file()
-    config_text = velocity_config.read_text(encoding="utf-8")
+    shared_config = package / "config" / "titan_brain.yaml"
+    launch_file = package / "launch" / "titan_brain.launch.py"
+    e2e_test = package / "test" / "test_e2e_transport.py"
+    assert shared_config.is_file()
+    assert launch_file.is_file()
+    assert e2e_test.is_file()
+    config_text = shared_config.read_text(encoding="utf-8")
     for required_parameter in (
+        "target_frame",
+        "watchdog_timeout_sec",
         "policy_version",
         "output_frame_id",
         "command_stale_threshold_sec",
@@ -121,6 +136,17 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
         "max_abs_angular_z",
     ):
         assert f"{required_parameter}:" in config_text
+    assert '"config/titan_brain.yaml"' in setup
+    assert '"launch/titan_brain.launch.py"' in setup
+    launch_text = launch_file.read_text(encoding="utf-8")
+    e2e_text = e2e_test.read_text(encoding="utf-8")
+    assert 'executable="safety_observation_node"' in launch_text
+    assert 'executable="velocity_arbiter_node"' in launch_text
+    assert 'parameters=[config_file]' in launch_text
+    assert "@pytest.mark.launch_test" in e2e_text
+    assert '"/safety/observation"' in e2e_text
+    assert '"/cmd_vel_nav"' in e2e_text
+    assert '"/cmd_vel"' in e2e_text
 
 
 def test_ci_contains_a_real_jazzy_runtime_gate() -> None:
@@ -130,7 +156,10 @@ def test_ci_contains_a_real_jazzy_runtime_gate() -> None:
 
     assert "ros-tooling/setup-ros@v0.7" in workflow
     assert "required-ros-distributions: jazzy" in workflow
-    assert "colcon --log-base ros2_ws/log build" in workflow
+    assert (
+        '"${TB_CI_VENV}/bin/python" -m colcon --log-base ros2_ws/log build'
+        in workflow
+    )
     assert "ros2_ws/src/titan_brain_ros/test" in workflow
     assert "python3 -m venv --system-site-packages" in workflow
     assert '"${TB_CI_VENV}/bin/python" -m pip install -e "."' in workflow
