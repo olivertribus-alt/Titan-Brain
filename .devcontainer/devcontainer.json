@@ -1,0 +1,19 @@
+{
+  "name": "Titan Brain ROS 2 Jazzy",
+  "build": {
+    "dockerfile": "../Dockerfile",
+    "context": ".."
+  },
+  "workspaceFolder": "/workspace/titan-brain",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace/titan-brain,type=bind,consistency=cached",
+  "remoteUser": "root",
+  "postCreateCommand": "scripts/quality-gate.sh python",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-iot.vscode-ros"
+      ]
+    }
+  }
+}

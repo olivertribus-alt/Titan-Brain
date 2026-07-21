@@ -171,25 +171,16 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert '"/cmd_vel"' in e2e_text
 
 
-def test_ci_contains_a_real_jazzy_runtime_gate() -> None:
+def test_ci_uses_the_reproducible_jazzy_container_gate() -> None:
     workflow = (REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml").read_text(
         encoding="utf-8"
     )
 
-    assert "ros-tooling/setup-ros@v0.7" in workflow
-    assert "required-ros-distributions: jazzy" in workflow
+    assert "pip install --constraint requirements/constraints.txt" in workflow
+    assert "docker build --tag titan-brain-dev:ci ." in workflow
     assert (
-        '"${TB_CI_VENV}/bin/python" -m colcon --log-base ros2_ws/log build'
+        "docker run --rm titan-brain-dev:ci scripts/quality-gate.sh all"
         in workflow
     )
-    assert "ros2_ws/src/titan_brain_ros/test" in workflow
-    assert "python3 -m venv --system-site-packages" in workflow
-    assert '"${TB_CI_VENV}/bin/python" -m pip install -e "."' in workflow
-    assert '"${TB_CI_VENV}/bin/python" -m pytest' in workflow
+    assert "ros-tooling/setup-ros" not in workflow
     assert "--break-system-packages" not in workflow
-    assert "rosdep update --rosdistro jazzy\n          rosdep install" in workflow
-    assert (
-        "source /opt/ros/jazzy/setup.bash\n"
-        '          "${TB_CI_VENV}/bin/python" -c "import pydantic, rclpy"'
-        in workflow
-    )

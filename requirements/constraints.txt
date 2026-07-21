@@ -1,0 +1,8 @@
+# Direct Python dependencies resolved by the green Python 3.12 quality gate.
+# This constrains the supported toolchain; it is not a hash-locked transitive lockfile.
+pydantic==2.13.4
+mypy==2.3.0
+# ROS 2 Jazzy launch_testing still implements the hook parameter removed in pytest 9.
+pytest==8.4.2
+pytest-cov==7.1.0
+ruff==0.15.22
