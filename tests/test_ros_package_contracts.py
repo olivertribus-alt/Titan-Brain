@@ -105,6 +105,7 @@ def test_ci_contains_a_real_jazzy_runtime_gate() -> None:
     assert "colcon --log-base ros2_ws/log build" in workflow
     assert "test_safety_observation_node.py" in workflow
     assert "python3 -m venv --system-site-packages" in workflow
+    assert '"${TB_CI_VENV}/bin/python" -m pip install -e "."' in workflow
     assert '"${TB_CI_VENV}/bin/python" -m pytest' in workflow
     assert "--break-system-packages" not in workflow
     assert "rosdep update --rosdistro jazzy\n          rosdep install" in workflow
