@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -31,6 +32,16 @@ def _package_dependencies(path: Path) -> set[str]:
         for element in root
         if element.tag in dependency_tags
     }
+
+
+def _float_parameter(config_text: str, name: str) -> float:
+    match = re.search(
+        rf"^\s+{re.escape(name)}:\s+([0-9]+(?:\.[0-9]+)?)\s*$",
+        config_text,
+        flags=re.MULTILINE,
+    )
+    assert match is not None, f"Missing numeric ROS parameter {name!r}"
+    return float(match.group(1))
 
 
 def test_titan_brain_message_contracts_are_explicit() -> None:
@@ -136,6 +147,17 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
         "max_abs_angular_z",
     ):
         assert f"{required_parameter}:" in config_text
+    max_observation_age_sec = _float_parameter(
+        config_text,
+        "max_observation_age_sec",
+    )
+    watchdog_timeout_sec = _float_parameter(
+        config_text,
+        "watchdog_timeout_sec",
+    )
+    assert max_observation_age_sec == 0.20
+    assert watchdog_timeout_sec == 0.20
+    assert watchdog_timeout_sec >= max_observation_age_sec
     assert '"config/titan_brain.yaml"' in setup
     assert '"launch/titan_brain.launch.py"' in setup
     launch_text = launch_file.read_text(encoding="utf-8")

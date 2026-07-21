@@ -52,7 +52,7 @@ def status_qos_profile() -> QoSProfile:
 
 
 def _required_text_parameter(node: Node, name: str) -> str:
-    value = node.declare_parameter(name).value
+    value = node.declare_parameter(name, Parameter.Type.STRING).value
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"ROS parameter {name!r} must be a non-blank string")
     return value
@@ -64,7 +64,7 @@ def _required_finite_parameter(
     *,
     allow_zero: bool,
 ) -> float:
-    value = node.declare_parameter(name).value
+    value = node.declare_parameter(name, Parameter.Type.DOUBLE).value
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"ROS parameter {name!r} must be numeric")
     checked = float(value)

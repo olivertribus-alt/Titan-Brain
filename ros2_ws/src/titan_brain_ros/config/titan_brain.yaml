@@ -1,7 +1,7 @@
 safety_observation_node:
   ros__parameters:
     target_frame: "map"
-    max_observation_age_sec: 0.25
+    max_observation_age_sec: 0.20
     max_future_skew_sec: 0.0
     watchdog_timeout_sec: 0.20
     timer_period_sec: 0.02
