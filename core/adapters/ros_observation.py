@@ -15,6 +15,7 @@ from pydantic import Field, ValidationError, model_validator
 
 from core.incident_store import FileIncidentStore
 from core.safety import (
+    DirectionalSafetyData,
     SafetyDecisionResult,
     SafetyObservation,
     SafetyRuleConfig,
@@ -51,6 +52,7 @@ class RosObservationMessage(StrictFrozenModel):
     clearance_m: float = Field(ge=0.0)
     confidence: float = Field(ge=0.0, le=1.0)
     sensor_id: str = Field(min_length=1)
+    directional_data: DirectionalSafetyData | None = None
 
 
 class RosObservationAdapterConfig(StrictFrozenModel):
@@ -201,15 +203,22 @@ def adapt_ros_observation(
             f"{config.max_observation_age_ns} ns limit.",
         )
 
-    observation = SafetyObservation(
-        timestamp_ns=timestamp_ns,
-        map_id=ros_message.map_id,
-        frame_id=ros_message.header.frame_id,
-        pose=ros_message.pose,
-        clearance_m=ros_message.clearance_m,
-        confidence=ros_message.confidence,
-        sensor_id=ros_message.sensor_id,
-    )
+    try:
+        observation = SafetyObservation(
+            timestamp_ns=timestamp_ns,
+            map_id=ros_message.map_id,
+            frame_id=ros_message.header.frame_id,
+            pose=ros_message.pose,
+            clearance_m=ros_message.clearance_m,
+            confidence=ros_message.confidence,
+            sensor_id=ros_message.sensor_id,
+            directional_data=ros_message.directional_data,
+        )
+    except ValidationError:
+        return _rejected(
+            ObservationAdaptationStatus.INVALID_MESSAGE,
+            "Message contains contradictory safety data.",
+        )
     return ObservationAdaptation(
         status=ObservationAdaptationStatus.ACCEPTED,
         observation=observation,
