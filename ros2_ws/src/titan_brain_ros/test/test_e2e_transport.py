@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 import unittest
 from collections.abc import Callable
@@ -16,6 +17,7 @@ from geometry_msgs.msg import Twist
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import (
     DurabilityPolicy,
@@ -32,6 +34,7 @@ from titan_brain_msgs.msg import (
 _PACKAGE_NAME = "titan_brain_ros"
 _DISCOVERY_TIMEOUT_SEC = 10.0
 _SCENARIO_TIMEOUT_SEC = 5.0
+_DRIVER_POLL_PERIOD_SEC = 0.005
 _OBSERVATION_PERIOD_NS = 20_000_000
 _CI_STOP_DEADLINE_NS = 250_000_000
 
@@ -117,9 +120,21 @@ class TestTitanBrainTransport(unittest.TestCase):
             cls._on_evaluation,
             _status_qos(),
         )
+        cls.executor = SingleThreadedExecutor(context=cls.node.context)
+        cls.executor.add_node(cls.node)
+        cls.executor_thread = threading.Thread(
+            target=cls.executor.spin,
+            name="titan-brain-e2e-executor",
+            daemon=True,
+        )
+        cls.executor_thread.start()
 
     @classmethod
     def tearDownClass(cls) -> None:
+        cls.executor.shutdown(timeout_sec=2.0)
+        cls.executor_thread.join(timeout=2.0)
+        if cls.executor_thread.is_alive():
+            raise RuntimeError("E2E test executor did not shut down cleanly")
         cls.node.destroy_node()
         rclpy.shutdown()
 
@@ -147,9 +162,13 @@ class TestTitanBrainTransport(unittest.TestCase):
         while time.monotonic() < deadline:
             if on_cycle is not None:
                 on_cycle()
-            rclpy.spin_once(self.node, timeout_sec=0.01)
             if predicate():
                 return
+            if not self.executor_thread.is_alive():
+                self.fail("E2E test executor stopped unexpectedly.")
+            time.sleep(_DRIVER_POLL_PERIOD_SEC)
+        if predicate():
+            return
         self.fail(failure_message)
 
     def _publish_observation(self, *, clearance_m: float) -> None:
