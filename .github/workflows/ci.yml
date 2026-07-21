@@ -1,29 +1,35 @@
-name: TB-CI-001 Quality Gate
+name: Quality Gate
 
 on:
   push:
-    branches: [ main, master, "feature/**" ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  quality-gate:
+  test:
     name: Quality Gate (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12"]
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/python-python@v5
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
           cache: "pip"
@@ -31,16 +37,13 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff mypy pytest pytest-cov pydantic
+          pip install -e ".[dev]"
 
-      - name: Run Ruff Lint Gate
-        run: |
-          ruff check core tests
+      - name: Run Ruff (Linter)
+        run: ruff check core tests
 
-      - name: Run Static Type Checker (mypy)
-        run: |
-          mypy core tests
+      - name: Run Mypy (Type Checker)
+        run: mypy core tests
 
-      - name: Run Test Suite & Coverage
-        run: |
-          pytest tests/ --cov=core --cov-report=term-missing
+      - name: Run Pytest with Coverage
+        run: pytest --cov=core --cov-report=term-missing
