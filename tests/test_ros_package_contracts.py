@@ -104,6 +104,7 @@ def test_ci_contains_a_real_jazzy_runtime_gate() -> None:
     assert "python3 -m venv --system-site-packages" in workflow
     assert '"${TB_CI_VENV}/bin/python" -m pytest' in workflow
     assert "--break-system-packages" not in workflow
+    assert "rosdep update --rosdistro jazzy\n          rosdep install" in workflow
     assert (
         "source /opt/ros/jazzy/setup.bash\n"
         '          "${TB_CI_VENV}/bin/python" -c "import pydantic, rclpy"'

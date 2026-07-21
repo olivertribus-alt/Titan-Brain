@@ -80,6 +80,7 @@ jobs:
       - name: Install ROS package dependencies
         shell: bash
         run: |
+          rosdep update --rosdistro jazzy
           rosdep install \
             --from-paths ros2_ws/src \
             --ignore-src \
