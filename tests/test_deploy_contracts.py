@@ -43,6 +43,7 @@ def test_one_script_runs_python_colcon_and_ros_runtime_gates() -> None:
     assert "--cov-fail-under=85" in script
     assert "-m colcon --log-base ros2_ws/log build" in script
     assert "-m colcon --log-base ros2_ws/log test" in script
+    assert "--python-testing pytest" in script
     assert "-m colcon test-result" in script
     assert "ros2_ws/src/titan_brain_ros/test" in script
     assert 'case "${TB_GATE_MODE}" in' in script

@@ -40,6 +40,7 @@ run_ros_gate() {
         --build-base ros2_ws/build \
         --install-base ros2_ws/install \
         --event-handlers console_direct+ \
+        --python-testing pytest \
         --return-code-on-test-failure
     "${TB_PYTHON_BIN}" -m colcon test-result \
         --test-result-base ros2_ws/build \
