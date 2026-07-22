@@ -4,7 +4,7 @@
 
 Implemented across the dependency-free arbiter core and ROS 2 Jazzy transport.
 Envelope freshness, source replay protection, and strict intent/envelope
-correlation matching remain reserved for TB-EVAL-005D.
+correlation matching were completed in the follow-up TB-EVAL-005D slice.
 
 ## Control-plane flow
 
@@ -54,7 +54,7 @@ This sub-slice validates message structure and frame but does not yet:
 - expose envelope metadata in arbitration telemetry;
 - inject correlation, replay, and timeout faults in live DDS tests.
 
-Those checks require stateful ingress tracking and are implemented together in
+Those checks require stateful ingress tracking and were implemented together in
 TB-EVAL-005D so their ordering and recovery behavior share one specification.
 
 ## Acceptance criteria

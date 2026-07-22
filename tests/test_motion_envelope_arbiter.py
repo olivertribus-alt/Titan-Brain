@@ -28,6 +28,7 @@ def arbiter() -> DynamicSafetyCommandArbiter:
             output_frame_id="base_link",
             command_stale_threshold_ns=100,
             safety_stale_threshold_ns=200,
+            motion_envelope_stale_threshold_ns=50,
             max_abs_linear_x=1.0,
             max_abs_linear_y=1.0,
             max_abs_angular_z=1.0,
@@ -66,6 +67,7 @@ def _intent(
         timestamp_ns=NOW_NS,
         correlation_id=correlation_id,
         sequence_id=sequence_id,
+        source_sequence_id=sequence_id,
     )
 
 
@@ -74,8 +76,9 @@ def _envelope(**updates: object) -> PermittedMotionEnvelope:
         "policy_version": "TB-EVAL-005C-ENVELOPE-0.1.0",
         "timestamp_ns": NOW_NS,
         "frame_id": "base_link",
-        "correlation_id": "envelope-001",
+        "correlation_id": "decision-001",
         "sequence_id": 1,
+        "ingress_sequence_id": 1,
         "min_linear_x_mps": -0.2,
         "max_linear_x_mps": 0.4,
         "min_linear_y_mps": -0.3,
@@ -225,7 +228,13 @@ def test_envelope_is_intersected_with_warning_non_acceleration_guard(
             sequence_id=3,
             correlation_id="decision-warning",
         ),
-        _envelope(max_linear_x_mps=0.1, max_linear_y_mps=0.05),
+        _envelope(
+            correlation_id="decision-warning",
+            sequence_id=3,
+            ingress_sequence_id=3,
+            max_linear_x_mps=0.1,
+            max_linear_y_mps=0.05,
+        ),
         now_ns=NOW_NS,
     )
 
@@ -262,3 +271,117 @@ def test_envelope_contract_is_strict_and_frozen() -> None:
         )
     with pytest.raises(ValidationError):
         envelope.max_linear_x_mps = 1.0
+
+
+@pytest.mark.parametrize(
+    ("age_ns", "reason"),
+    [
+        (49, None),
+        (50, ArbitrationReason.MOTION_ENVELOPE_TIMEOUT),
+        (51, ArbitrationReason.MOTION_ENVELOPE_TIMEOUT),
+    ],
+)
+def test_motion_envelope_timeout_boundary(
+    arbiter: DynamicSafetyCommandArbiter,
+    age_ns: int,
+    reason: ArbitrationReason | None,
+) -> None:
+    result = arbiter.evaluate_with_envelope(
+        _command(),
+        _intent(),
+        _envelope(timestamp_ns=NOW_NS - age_ns),
+        now_ns=NOW_NS,
+    )
+
+    if reason is None:
+        assert result.reason is ArbitrationReason.PROCEED
+    else:
+        _assert_zero(reason, result)
+
+
+def test_future_motion_envelope_timestamp_fails_closed(
+    arbiter: DynamicSafetyCommandArbiter,
+) -> None:
+    result = arbiter.evaluate_with_envelope(
+        _command(),
+        _intent(),
+        _envelope(timestamp_ns=NOW_NS + 1),
+        now_ns=NOW_NS,
+    )
+
+    _assert_zero(ArbitrationReason.MOTION_ENVELOPE_CLOCK_REGRESSION, result)
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"correlation_id": "other-decision"},
+        {"sequence_id": 2},
+    ],
+)
+def test_intent_envelope_desynchronization_fails_closed(
+    arbiter: DynamicSafetyCommandArbiter,
+    updates: dict[str, object],
+) -> None:
+    result = arbiter.evaluate_with_envelope(
+        _command(),
+        _intent(),
+        _envelope(**updates),
+        now_ns=NOW_NS,
+    )
+
+    _assert_zero(ArbitrationReason.MOTION_ENVELOPE_INTENT_MISMATCH, result)
+
+
+def test_command_must_arrive_after_matched_motion_envelope(
+    arbiter: DynamicSafetyCommandArbiter,
+) -> None:
+    result = arbiter.evaluate_with_envelope(
+        _command(sequence_id=2),
+        _intent(),
+        _envelope(ingress_sequence_id=2),
+        now_ns=NOW_NS,
+    )
+
+    _assert_zero(ArbitrationReason.MOTION_ENVELOPE_COMMAND_REQUIRED, result)
+
+
+def test_envelope_timeout_latches_recovery_until_new_normal_intent(
+    arbiter: DynamicSafetyCommandArbiter,
+) -> None:
+    """An envelope timeout cannot silently release on the next envelope."""
+    initial = arbiter.evaluate_with_envelope(
+        _command(sequence_id=2),
+        _intent(),
+        _envelope(),
+        now_ns=NOW_NS,
+    )
+    assert initial.reason is ArbitrationReason.PROCEED
+
+    timed_out = arbiter.evaluate_with_envelope(
+        _command(sequence_id=3),
+        _intent(),
+        _envelope(timestamp_ns=NOW_NS - 50),
+        now_ns=NOW_NS,
+    )
+    _assert_zero(ArbitrationReason.MOTION_ENVELOPE_TIMEOUT, timed_out)
+
+    still_latched = arbiter.evaluate_with_envelope(
+        _command(sequence_id=4),
+        _intent(),
+        _envelope(ingress_sequence_id=3),
+        now_ns=NOW_NS,
+    )
+    _assert_zero(ArbitrationReason.RECOVERY_HOLDING, still_latched)
+
+    released = arbiter.evaluate_with_envelope(
+        _command(sequence_id=6),
+        _intent(sequence_id=2, correlation_id="decision-002"),
+        _envelope(
+            correlation_id="decision-002",
+            sequence_id=2,
+            ingress_sequence_id=5,
+        ),
+        now_ns=NOW_NS,
+    )
+    assert released.reason is ArbitrationReason.PROCEED

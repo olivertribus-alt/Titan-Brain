@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from enum import StrEnum
-from typing import Self, TypeAlias
+from typing import Self, TypeAlias, cast
 
 from pydantic import Field, ValidationError, field_validator, model_validator
 
@@ -75,6 +75,10 @@ class ArbitrationReason(StrEnum):
     MOTION_ENVELOPE_INVALID = "motion_envelope_invalid"
     MOTION_ENVELOPE_FRAME_MISMATCH = "motion_envelope_frame_mismatch"
     MOTION_ENVELOPE_CLAMPED = "motion_envelope_clamped"
+    MOTION_ENVELOPE_CLOCK_REGRESSION = "motion_envelope_clock_regression"
+    MOTION_ENVELOPE_TIMEOUT = "motion_envelope_timeout"
+    MOTION_ENVELOPE_INTENT_MISMATCH = "motion_envelope_intent_mismatch"
+    MOTION_ENVELOPE_COMMAND_REQUIRED = "motion_envelope_command_required"
 
 
 class SafetyIntentState(StrEnum):
@@ -104,6 +108,7 @@ class SafetyIntent(StrictFrozenModel):
     timestamp_ns: int = Field(ge=0)
     correlation_id: str = Field(min_length=1)
     sequence_id: int = Field(gt=0)
+    source_sequence_id: int | None = Field(default=None, gt=0)
 
     @field_validator("state", mode="before")
     @classmethod
@@ -122,6 +127,7 @@ class PermittedMotionEnvelope(StrictFrozenModel):
     frame_id: str = Field(min_length=1)
     correlation_id: str = Field(min_length=1)
     sequence_id: int = Field(gt=0)
+    ingress_sequence_id: int = Field(gt=0)
     min_linear_x_mps: float = Field(le=0.0)
     max_linear_x_mps: float = Field(ge=0.0)
     min_linear_y_mps: float = Field(le=0.0)
@@ -174,6 +180,12 @@ class VelocityArbiterConfig(StrictFrozenModel):
     output_frame_id: str = Field(min_length=1)
     command_stale_threshold_ns: int = Field(gt=0)
     safety_stale_threshold_ns: int = Field(gt=0)
+    # Keep the legacy non-envelope arbiter constructible while giving the
+    # envelope-aware path a conservative default budget.
+    motion_envelope_stale_threshold_ns: int = Field(
+        default=50_000_000,
+        gt=0,
+    )
     max_abs_linear_x: float = Field(ge=0.0)
     max_abs_linear_y: float = Field(ge=0.0)
     max_abs_angular_z: float = Field(ge=0.0)
@@ -809,10 +821,19 @@ class DynamicSafetyCommandArbiter:
         if result.mode is ArbitrationMode.FORCED_ZERO:
             return result
 
+        # ``evaluate`` can only produce a non-zero result for a valid intent;
+        # retain that parsed authority so every envelope fault can latch the
+        # recovery guard with the exact correlation context.
+        intent = cast(
+            SafetyIntent,
+            _parse_safety_intent(safety_intent)[0],
+        )
+
         envelope, envelope_was_supplied = _parse_motion_envelope(
             motion_envelope
         )
         if envelope is None:
+            self._latch(intent)
             return self._zero(
                 (
                     ArbitrationReason.MOTION_ENVELOPE_INVALID
@@ -823,8 +844,48 @@ class DynamicSafetyCommandArbiter:
                 correlation_id=result.correlation_id,
             )
         if envelope.frame_id != self._config.output_frame_id:
+            self._latch(intent)
             return self._zero(
                 ArbitrationReason.MOTION_ENVELOPE_FRAME_MISMATCH,
+                timestamp_ns=result.command.timestamp_ns,
+                correlation_id=result.correlation_id,
+            )
+
+        source_sequence_id = (
+            intent.source_sequence_id
+            if intent.source_sequence_id is not None
+            else intent.sequence_id
+        )
+        if (
+            envelope.correlation_id != intent.correlation_id
+            or envelope.sequence_id != source_sequence_id
+        ):
+            self._latch(intent)
+            return self._zero(
+                ArbitrationReason.MOTION_ENVELOPE_INTENT_MISMATCH,
+                timestamp_ns=result.command.timestamp_ns,
+                correlation_id=result.correlation_id,
+            )
+
+        checked_now_ns = cast(int, _checked_now_ns(now_ns))
+        envelope_age_ns = checked_now_ns - envelope.timestamp_ns
+        if envelope_age_ns < 0:
+            self._latch(intent)
+            return self._zero(
+                ArbitrationReason.MOTION_ENVELOPE_CLOCK_REGRESSION,
+                timestamp_ns=result.command.timestamp_ns,
+                correlation_id=result.correlation_id,
+            )
+        if envelope_age_ns >= self._config.motion_envelope_stale_threshold_ns:
+            self._latch(intent)
+            return self._zero(
+                ArbitrationReason.MOTION_ENVELOPE_TIMEOUT,
+                timestamp_ns=result.command.timestamp_ns,
+                correlation_id=result.correlation_id,
+            )
+        if result.command.sequence_id <= envelope.ingress_sequence_id:
+            return self._zero(
+                ArbitrationReason.MOTION_ENVELOPE_COMMAND_REQUIRED,
                 timestamp_ns=result.command.timestamp_ns,
                 correlation_id=result.correlation_id,
             )

@@ -154,6 +154,11 @@ class VelocityArbiterNode(Node):
             "safety_stale_threshold_sec",
             allow_zero=False,
         )
+        motion_envelope_stale_sec = _required_finite_parameter(
+            self,
+            "motion_envelope_stale_threshold_sec",
+            allow_zero=False,
+        )
         timer_period_sec = _required_finite_parameter(
             self,
             "timer_period_sec",
@@ -174,6 +179,10 @@ class VelocityArbiterNode(Node):
             safety_stale_threshold_ns=_seconds_to_ns(
                 safety_stale_sec,
                 name="safety_stale_threshold_sec",
+            ),
+            motion_envelope_stale_threshold_ns=_seconds_to_ns(
+                motion_envelope_stale_sec,
+                name="motion_envelope_stale_threshold_sec",
             ),
             max_abs_linear_x=_required_finite_parameter(
                 self,
@@ -220,7 +229,12 @@ class VelocityArbiterNode(Node):
         self._source_intent_sequence_id = 0
         self._last_source_intent_sequence_id: int | None = None
         self._last_source_intent_payload: tuple[int, int, str] | None = None
+        self._source_envelope_sequence_id = 0
+        self._last_source_envelope_sequence_id: int | None = None
+        self._last_source_envelope_payload: tuple[object, ...] | None = None
         self._audit_correlation_id = ""
+        self._audit_envelope_correlation_id = ""
+        self._motion_envelope_timestamp_ns = 0
         self._safety_intent_received_ns: int | None = None
         self._last_result: ArbitrationResult | None = None
         self._last_status: ArbitrationStatusMsg | None = None
@@ -343,18 +357,62 @@ class VelocityArbiterNode(Node):
             # Commands and intents deliberately share this local ordering
             # domain; publisher sequence IDs are validated separately above.
             "sequence_id": self._next_ingress_sequence_id(),
+            "source_sequence_id": source_sequence_id,
         }
 
     def _on_motion_envelope(
         self,
         message: PermittedMotionEnvelopeMsg,
     ) -> None:
+        source_sequence_id = int(message.sequence_id)
+        timestamp_ns = _envelope_timestamp_ns(message)
+        correlation_id = str(message.correlation_id)
+        payload = (
+            timestamp_ns,
+            str(message.header.frame_id),
+            str(message.policy_version),
+            correlation_id,
+            float(message.min_linear_x_mps),
+            float(message.max_linear_x_mps),
+            float(message.min_linear_y_mps),
+            float(message.max_linear_y_mps),
+            float(message.min_angular_z_radps),
+            float(message.max_angular_z_radps),
+        )
+        self._source_envelope_sequence_id = source_sequence_id
+        self._audit_envelope_correlation_id = correlation_id
+        self._motion_envelope_timestamp_ns = timestamp_ns
+
+        if source_sequence_id <= 0:
+            self._motion_envelope = {
+                "invalid_source_sequence_id": source_sequence_id
+            }
+            return
+
+        last_sequence_id = self._last_source_envelope_sequence_id
+        if last_sequence_id is not None:
+            if source_sequence_id < last_sequence_id:
+                self._motion_envelope = {
+                    "source_sequence_regression": source_sequence_id
+                }
+                return
+            if source_sequence_id == last_sequence_id:
+                if payload != self._last_source_envelope_payload:
+                    self._motion_envelope = {
+                        "source_sequence_payload_mutation": source_sequence_id
+                    }
+                # An identical replay is deliberately not freshened.
+                return
+
+        self._last_source_envelope_sequence_id = source_sequence_id
+        self._last_source_envelope_payload = payload
         self._motion_envelope = {
             "policy_version": str(message.policy_version),
-            "timestamp_ns": _envelope_timestamp_ns(message),
+            "timestamp_ns": timestamp_ns,
             "frame_id": str(message.header.frame_id),
-            "correlation_id": str(message.correlation_id),
-            "sequence_id": int(message.sequence_id),
+            "correlation_id": correlation_id,
+            "sequence_id": source_sequence_id,
+            "ingress_sequence_id": self._next_ingress_sequence_id(),
             "min_linear_x_mps": float(message.min_linear_x_mps),
             "max_linear_x_mps": float(message.max_linear_x_mps),
             "min_linear_y_mps": float(message.min_linear_y_mps),
@@ -389,6 +447,11 @@ class VelocityArbiterNode(Node):
         status.is_safe = result.mode is not ArbitrationMode.FORCED_ZERO
         status.command_sequence_id = self._command_sequence_id
         status.safety_intent_sequence_id = self._source_intent_sequence_id
+        status.motion_envelope_sequence_id = self._source_envelope_sequence_id
+        status.motion_envelope_correlation_id = (
+            self._audit_envelope_correlation_id
+        )
+        status.motion_envelope_timestamp_ns = self._motion_envelope_timestamp_ns
         status.arbitration_latency_status = timing.status.value
         status.arbitration_timing_valid = timing.timing_valid
         status.arbitration_within_budget = timing.within_budget
