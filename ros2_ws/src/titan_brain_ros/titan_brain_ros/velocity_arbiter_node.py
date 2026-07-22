@@ -26,6 +26,7 @@ from core.arbitrator import (
     VelocityArbiterConfig,
     VelocityInput,
 )
+from core.command_observability import measure_arbitration_latency
 
 _NANOSECONDS_PER_SECOND = 1_000_000_000
 
@@ -147,6 +148,11 @@ class VelocityArbiterNode(Node):
             "timer_period_sec",
             allow_zero=False,
         )
+        arbitration_latency_budget_sec = _required_finite_parameter(
+            self,
+            "arbitration_latency_budget_sec",
+            allow_zero=False,
+        )
         config = VelocityArbiterConfig(
             policy_version=policy_version,
             output_frame_id=output_frame_id,
@@ -191,6 +197,10 @@ class VelocityArbiterNode(Node):
         )
 
         self._arbiter = DynamicSafetyCommandArbiter(config)
+        self._arbitration_latency_budget_ns = _seconds_to_ns(
+            arbitration_latency_budget_sec,
+            name="arbitration_latency_budget_sec",
+        )
         self._desired_velocity: VelocityInput = None
         self._safety_intent: IntentInput = None
         self._ingress_sequence_id = 0
@@ -199,6 +209,7 @@ class VelocityArbiterNode(Node):
         self._last_source_intent_sequence_id: int | None = None
         self._last_source_intent_payload: tuple[int, int, str] | None = None
         self._audit_correlation_id = ""
+        self._safety_intent_received_ns: int | None = None
         self._last_result: ArbitrationResult | None = None
         self._last_status: ArbitrationStatusMsg | None = None
 
@@ -269,6 +280,7 @@ class VelocityArbiterNode(Node):
         }
 
     def _on_safety_intent(self, message: SafetyIntentMsg) -> None:
+        received_at_ns = self.get_clock().now().nanoseconds
         source_sequence_id = int(message.sequence_id)
         timestamp_ns = _intent_timestamp_ns(message)
         correlation_id = str(message.correlation_id)
@@ -277,18 +289,21 @@ class VelocityArbiterNode(Node):
         self._audit_correlation_id = correlation_id
 
         if source_sequence_id <= 0:
+            self._safety_intent_received_ns = received_at_ns
             self._safety_intent = {"invalid_source_sequence_id": source_sequence_id}
             return
 
         last_sequence_id = self._last_source_intent_sequence_id
         if last_sequence_id is not None:
             if source_sequence_id < last_sequence_id:
+                self._safety_intent_received_ns = received_at_ns
                 self._safety_intent = {
                     "source_sequence_regression": source_sequence_id
                 }
                 return
             if source_sequence_id == last_sequence_id:
                 if payload != self._last_source_intent_payload:
+                    self._safety_intent_received_ns = received_at_ns
                     self._safety_intent = {
                         "source_sequence_payload_mutation": source_sequence_id
                     }
@@ -297,6 +312,7 @@ class VelocityArbiterNode(Node):
 
         self._last_source_intent_sequence_id = source_sequence_id
         self._last_source_intent_payload = payload
+        self._safety_intent_received_ns = received_at_ns
         state = _intent_state(int(message.state))
         if state is None or not correlation_id.strip():
             self._safety_intent = {"invalid_safety_intent": payload}
@@ -314,12 +330,19 @@ class VelocityArbiterNode(Node):
     def _warning_limit(self, warning: float | None, nominal: float) -> float:
         return nominal if warning is None else warning
 
-    def _publish_result(self, result: ArbitrationResult, *, now_ns: int) -> None:
+    def _publish_result(self, result: ArbitrationResult) -> None:
         command = _twist_from_result(result)
+        self._command_publisher.publish(command)
+        published_at_ns = self.get_clock().now().nanoseconds
         config = self._arbiter.config
+        timing = measure_arbitration_latency(
+            intent_received_ns=self._safety_intent_received_ns,
+            command_published_ns=published_at_ns,
+            budget_ns=self._arbitration_latency_budget_ns,
+        )
         status = ArbitrationStatusMsg()
-        status.header.stamp.sec = now_ns // _NANOSECONDS_PER_SECOND
-        status.header.stamp.nanosec = now_ns % _NANOSECONDS_PER_SECOND
+        status.header.stamp.sec = published_at_ns // _NANOSECONDS_PER_SECOND
+        status.header.stamp.nanosec = published_at_ns % _NANOSECONDS_PER_SECOND
         status.header.frame_id = config.output_frame_id
         status.mode = _status_mode(result)
         status.reason = result.reason.value
@@ -330,6 +353,13 @@ class VelocityArbiterNode(Node):
         status.is_safe = result.mode is not ArbitrationMode.FORCED_ZERO
         status.command_sequence_id = self._command_sequence_id
         status.safety_intent_sequence_id = self._source_intent_sequence_id
+        status.arbitration_latency_status = timing.status.value
+        status.arbitration_timing_valid = timing.timing_valid
+        status.arbitration_within_budget = timing.within_budget
+        status.intent_received_timestamp_ns = timing.intent_received_ns or 0
+        status.command_published_timestamp_ns = timing.command_published_ns or 0
+        status.arbitration_latency_ns = timing.latency_ns or 0
+        status.arbitration_latency_budget_ns = timing.budget_ns
         status.max_abs_linear_x = config.max_abs_linear_x
         status.max_abs_linear_y = config.max_abs_linear_y
         status.max_abs_angular_z = config.max_abs_angular_z
@@ -347,7 +377,6 @@ class VelocityArbiterNode(Node):
         )
         status.commanded_twist = command
 
-        self._command_publisher.publish(command)
         self._status_publisher.publish(status)
         self._last_result = result
         self._last_status = status
@@ -359,7 +388,7 @@ class VelocityArbiterNode(Node):
             self._safety_intent,
             now_ns=now_ns,
         )
-        self._publish_result(result, now_ns=now_ns)
+        self._publish_result(result)
 
 
 def main(args: list[str] | None = None) -> None:

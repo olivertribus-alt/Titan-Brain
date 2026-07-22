@@ -108,6 +108,10 @@ def test_titan_brain_message_contracts_are_explicit() -> None:
         "string latency_status",
         "bool timing_valid",
         "bool within_budget",
+        "uint64 observation_timestamp_ns",
+        "uint64 received_timestamp_ns",
+        "uint64 decision_timestamp_ns",
+        "uint64 published_timestamp_ns",
         "uint64 observation_to_receive_ns",
         "uint64 receive_to_decision_ns",
         "uint64 decision_to_publish_ns",
@@ -144,6 +148,13 @@ def test_titan_brain_message_contracts_are_explicit() -> None:
         "bool is_safe",
         "uint64 command_sequence_id",
         "uint64 safety_intent_sequence_id",
+        "string arbitration_latency_status",
+        "bool arbitration_timing_valid",
+        "bool arbitration_within_budget",
+        "uint64 intent_received_timestamp_ns",
+        "uint64 command_published_timestamp_ns",
+        "uint64 arbitration_latency_ns",
+        "uint64 arbitration_latency_budget_ns",
         "float64 max_abs_linear_x",
         "float64 max_abs_linear_y",
         "float64 max_abs_angular_z",
@@ -151,6 +162,32 @@ def test_titan_brain_message_contracts_are_explicit() -> None:
         "float64 warning_max_abs_linear_y",
         "float64 warning_max_abs_angular_z",
         "geometry_msgs/Twist commanded_twist",
+    ]
+    assert _message_fields(messages / "CommandPathObservabilityStatus.msg") == [
+        "std_msgs/Header header",
+        "string schema_version",
+        "string policy_version",
+        "string correlation_id",
+        "string decision_id",
+        "string outcome",
+        "string arbitration_reason",
+        "uint8 arbitration_mode",
+        "uint64 command_sequence_id",
+        "uint64 safety_intent_sequence_id",
+        "string latency_status",
+        "bool timing_valid",
+        "bool within_budget",
+        "uint64 observation_timestamp_ns",
+        "uint64 evaluator_published_timestamp_ns",
+        "uint64 intent_received_timestamp_ns",
+        "uint64 command_published_timestamp_ns",
+        "uint64 evaluator_end_to_end_ns",
+        "uint64 arbitration_latency_ns",
+        "uint64 observation_to_command_ns",
+        "uint64 arbitration_latency_budget_ns",
+        "uint64 observation_to_command_budget_ns",
+        "string[] exceeded_budgets",
+        "string detail",
     ]
 
 
@@ -175,6 +212,7 @@ def test_message_package_declares_rosidl_and_message_dependencies() -> None:
     assert '"msg/EvaluatorObservabilityStatus.msg"' in cmake
     assert '"msg/SafetyIntent.msg"' in cmake
     assert '"msg/ArbitrationStatus.msg"' in cmake
+    assert '"msg/CommandPathObservabilityStatus.msg"' in cmake
 
 
 def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
@@ -200,12 +238,16 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
         in setup
     )
     assert "titan_brain_ros.velocity_arbiter_node:main" in setup
+    assert "titan_brain_ros.command_path_observability_node:main" in setup
     assert (package / "resource" / "titan_brain_ros").is_file()
     assert (
         package / "titan_brain_ros" / "safety_observation_node.py"
     ).is_file()
     assert (
         package / "titan_brain_ros" / "velocity_arbiter_node.py"
+    ).is_file()
+    assert (
+        package / "titan_brain_ros" / "command_path_observability_node.py"
     ).is_file()
     shared_config = package / "config" / "titan_brain.yaml"
     launch_file = package / "launch" / "titan_brain.launch.py"
@@ -225,6 +267,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
         "max_abs_linear_x",
         "max_abs_linear_y",
         "max_abs_angular_z",
+        "arbitration_latency_budget_sec",
         "warning_max_abs_linear_x",
         "warning_max_abs_linear_y",
         "warning_max_abs_angular_z",
@@ -244,6 +287,10 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
         "receive_to_decision_budget_s",
         "decision_to_publish_budget_s",
         "end_to_end_budget_s",
+        "command_path_policy_version",
+        "observation_to_command_budget_sec",
+        "max_correlation_entries",
+        "max_pending_per_correlation",
     ):
         assert f"{required_parameter}:" in config_text
     max_observation_age_sec = _float_parameter(
@@ -268,18 +315,22 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert _float_parameter(config_text, "warning_max_abs_linear_x") == 0.3
     assert _float_parameter(config_text, "warning_max_abs_linear_y") == 0.1
     assert _float_parameter(config_text, "warning_max_abs_angular_z") == 0.5
+    assert _float_parameter(config_text, "arbitration_latency_budget_sec") == 0.03
+    assert _float_parameter(config_text, "observation_to_command_budget_sec") == 0.10
     assert '"config/titan_brain.yaml"' in setup
     assert '"launch/titan_brain.launch.py"' in setup
     launch_text = launch_file.read_text(encoding="utf-8")
     e2e_text = e2e_test.read_text(encoding="utf-8")
     assert 'executable="safety_observation_node"' in launch_text
     assert 'executable="velocity_arbiter_node"' in launch_text
+    assert 'executable="command_path_observability_node"' in launch_text
     assert 'parameters=[config_file]' in launch_text
     assert "@pytest.mark.launch_test" in e2e_text
     assert '"/safety/observation"' in e2e_text
     assert '"/safety/directional_observation"' in e2e_text
     assert '"/safety/stability_status"' in e2e_text
     assert '"/safety/evaluator_observability"' in e2e_text
+    assert '"/safety/command_path_observability"' in e2e_text
     assert '"/safety/intent"' in e2e_text
     assert '"/cmd_vel_raw"' in e2e_text
     assert '"/cmd_vel"' in e2e_text

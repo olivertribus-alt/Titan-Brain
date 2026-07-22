@@ -55,6 +55,10 @@ def test_valid_pipeline_records_exact_latencies_and_audit_correlation() -> None:
     assert report.latency_status is LatencyStatus.WITHIN_BUDGET
     assert report.timing_valid is True
     assert report.within_budget is True
+    assert report.observation_timestamp_ns == 100
+    assert report.received_timestamp_ns == 110
+    assert report.decision_timestamp_ns == 130
+    assert report.published_timestamp_ns == 140
     assert report.observation_to_receive_ns == 10
     assert report.receive_to_decision_ns == 20
     assert report.decision_to_publish_ns == 10
@@ -205,9 +209,13 @@ def test_ros_projection_uses_explicit_validity_flags_for_optional_latencies() ->
     )
 
     assert valid.timing_valid is True
+    assert valid.observation_timestamp_ns == 100
+    assert valid.published_timestamp_ns == 140
     assert valid.end_to_end_ns == 40
     assert valid.normal_count == 1
     assert invalid.timing_valid is False
+    assert invalid.observation_timestamp_ns == 0
+    assert invalid.published_timestamp_ns == 0
     assert invalid.end_to_end_ns == 0
     assert invalid.rejected_count == 1
     assert invalid.invalid_timing_count == 1
@@ -249,7 +257,7 @@ def test_config_and_report_models_reject_incoherent_shapes() -> None:
         budget_exceeded=0,
         invalid_timing=0,
     )
-    with pytest.raises(ValidationError, match="all latencies"):
+    with pytest.raises(ValidationError, match="all timestamps, latencies"):
         EvaluationObservabilityReport(
             policy_version="TB-OBS-004-0.1.0",
             correlation_id="eval_1",
@@ -263,6 +271,10 @@ def test_config_and_report_models_reject_incoherent_shapes() -> None:
             correlation_id="eval_2",
             outcome=EvaluationOutcome.NORMAL,
             latency_status=LatencyStatus.WITHIN_BUDGET,
+            observation_timestamp_ns=0,
+            received_timestamp_ns=1,
+            decision_timestamp_ns=2,
+            published_timestamp_ns=3,
             observation_to_receive_ns=1,
             receive_to_decision_ns=1,
             decision_to_publish_ns=1,
@@ -276,13 +288,17 @@ def test_config_and_report_models_reject_incoherent_shapes() -> None:
             correlation_id="eval_3",
             outcome=EvaluationOutcome.NORMAL,
             latency_status=LatencyStatus.BUDGET_EXCEEDED,
+            observation_timestamp_ns=0,
+            received_timestamp_ns=1,
+            decision_timestamp_ns=2,
+            published_timestamp_ns=3,
             observation_to_receive_ns=1,
             receive_to_decision_ns=1,
             decision_to_publish_ns=1,
             end_to_end_ns=3,
             counters=counters,
         )
-    with pytest.raises(ValidationError, match="detail and no latencies"):
+    with pytest.raises(ValidationError, match="no timestamps or latencies"):
         EvaluationObservabilityReport(
             policy_version="TB-OBS-004-0.1.0",
             correlation_id="eval_4",
@@ -290,5 +306,21 @@ def test_config_and_report_models_reject_incoherent_shapes() -> None:
             latency_status=LatencyStatus.CLOCK_REGRESSION,
             observation_to_receive_ns=1,
             detail="clock regressed",
+            counters=counters,
+        )
+    with pytest.raises(ValidationError, match="must match monotonic timestamps"):
+        EvaluationObservabilityReport(
+            policy_version="TB-OBS-004-0.1.0",
+            correlation_id="eval_5",
+            outcome=EvaluationOutcome.NORMAL,
+            latency_status=LatencyStatus.WITHIN_BUDGET,
+            observation_timestamp_ns=0,
+            received_timestamp_ns=1,
+            decision_timestamp_ns=2,
+            published_timestamp_ns=3,
+            observation_to_receive_ns=1,
+            receive_to_decision_ns=1,
+            decision_to_publish_ns=1,
+            end_to_end_ns=4,
             counters=counters,
         )

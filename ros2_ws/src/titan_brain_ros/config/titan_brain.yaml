@@ -31,9 +31,18 @@ velocity_arbiter_node:
     command_stale_threshold_sec: 0.10
     safety_stale_threshold_sec: 0.25
     timer_period_sec: 0.01
+    arbitration_latency_budget_sec: 0.03
     max_abs_linear_x: 0.8
     max_abs_linear_y: 0.2
     max_abs_angular_z: 1.5
     warning_max_abs_linear_x: 0.3
     warning_max_abs_linear_y: 0.1
     warning_max_abs_angular_z: 0.5
+
+command_path_observability_node:
+  ros__parameters:
+    command_path_policy_version: "TB-EVAL-004D-0.1.0"
+    arbitration_latency_budget_sec: 0.03
+    observation_to_command_budget_sec: 0.10
+    max_correlation_entries: 256
+    max_pending_per_correlation: 16

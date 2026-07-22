@@ -17,6 +17,10 @@ class RosEvaluatorDiagnostic(StrictFrozenModel):
     latency_status: str
     timing_valid: bool
     within_budget: bool
+    observation_timestamp_ns: int = Field(ge=0)
+    received_timestamp_ns: int = Field(ge=0)
+    decision_timestamp_ns: int = Field(ge=0)
+    published_timestamp_ns: int = Field(ge=0)
     observation_to_receive_ns: int = Field(ge=0)
     receive_to_decision_ns: int = Field(ge=0)
     decision_to_publish_ns: int = Field(ge=0)
@@ -46,6 +50,10 @@ def to_ros_evaluator_diagnostic(
         latency_status=report.latency_status.value,
         timing_valid=report.timing_valid,
         within_budget=report.within_budget,
+        observation_timestamp_ns=report.observation_timestamp_ns or 0,
+        received_timestamp_ns=report.received_timestamp_ns or 0,
+        decision_timestamp_ns=report.decision_timestamp_ns or 0,
+        published_timestamp_ns=report.published_timestamp_ns or 0,
         observation_to_receive_ns=report.observation_to_receive_ns or 0,
         receive_to_decision_ns=report.receive_to_decision_ns or 0,
         decision_to_publish_ns=report.decision_to_publish_ns or 0,

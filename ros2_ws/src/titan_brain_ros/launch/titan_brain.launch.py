@@ -38,5 +38,12 @@ def generate_launch_description() -> LaunchDescription:
                 parameters=[config_file],
                 output="screen",
             ),
+            Node(
+                package=_PACKAGE_NAME,
+                executable="command_path_observability_node",
+                name="command_path_observability_node",
+                parameters=[config_file],
+                output="screen",
+            ),
         ]
     )
