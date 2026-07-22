@@ -9,10 +9,10 @@ fail-closed and cannot release a trip automatically.
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Mapping
 
 DEFAULT_HEARTBEAT_TIMEOUT_NS = 200_000_000
 DEFAULT_RELAY_BUDGET_NS = 50_000_000

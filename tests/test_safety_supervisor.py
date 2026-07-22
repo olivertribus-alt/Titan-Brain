@@ -19,7 +19,6 @@ from core.safety_supervisor import (
     SafetySupervisorResult,
 )
 
-
 CHANNELS = tuple(HeartbeatChannel)
 
 

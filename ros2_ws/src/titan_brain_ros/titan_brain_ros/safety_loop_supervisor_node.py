@@ -15,8 +15,11 @@ from rclpy.qos import (
     QoSProfile,
     ReliabilityPolicy,
 )
-from titan_brain_msgs.msg import SafetyHeartbeat, SafetyRelayStatus
-from titan_brain_msgs.msg import SafetySupervisorStatus
+from titan_brain_msgs.msg import (
+    SafetyHeartbeat,
+    SafetyRelayStatus,
+    SafetySupervisorStatus,
+)
 
 from core.safety_supervisor import (
     HeartbeatChannel,
