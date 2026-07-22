@@ -30,6 +30,7 @@ from titan_brain_msgs.msg import (
     DirectionalSafetyObservation,
     SafetyEvaluationStatus,
     SafetyObservation,
+    SafetyStabilityStatus,
 )
 
 _PACKAGE_NAME = "titan_brain_ros"
@@ -92,6 +93,7 @@ class TestTitanBrainTransport(unittest.TestCase):
         cls.cmd_vel_events: list[tuple[Twist, int]] = []
         cls.arbitration_events: list[tuple[ArbitrationStatus, int]] = []
         cls.evaluation_events: list[SafetyEvaluationStatus] = []
+        cls.stability_events: list[SafetyStabilityStatus] = []
 
         cls.observation_publisher = cls.node.create_publisher(
             DirectionalSafetyObservation,
@@ -126,6 +128,12 @@ class TestTitanBrainTransport(unittest.TestCase):
             cls._on_evaluation,
             _status_qos(),
         )
+        cls.stability_subscription = cls.node.create_subscription(
+            SafetyStabilityStatus,
+            "/safety/stability_status",
+            cls._on_stability,
+            _status_qos(),
+        )
         cls.executor = SingleThreadedExecutor(context=cls.node.context)
         cls.executor.add_node(cls.node)
         cls.executor_thread = threading.Thread(
@@ -155,6 +163,10 @@ class TestTitanBrainTransport(unittest.TestCase):
     @classmethod
     def _on_evaluation(cls, message: SafetyEvaluationStatus) -> None:
         cls.evaluation_events.append(message)
+
+    @classmethod
+    def _on_stability(cls, message: SafetyStabilityStatus) -> None:
+        cls.stability_events.append(message)
 
     def _wait_for(
         self,
@@ -256,9 +268,14 @@ class TestTitanBrainTransport(unittest.TestCase):
         arbitration_reasons = [
             message.reason for message, _received_at_ns in self.arbitration_events[-20:]
         ]
+        stability_states = [
+            (message.state, message.reason, message.effective_action)
+            for message in self.stability_events[-10:]
+        ]
         return (
             f"recent evaluations={evaluation_states!r}; "
-            f"recent arbitration reasons={arbitration_reasons!r}"
+            f"recent arbitration reasons={arbitration_reasons!r}; "
+            f"recent stability states={stability_states!r}"
         )
 
     def _stream_inputs_until_arbitration(
@@ -342,6 +359,7 @@ class TestTitanBrainTransport(unittest.TestCase):
         self.cmd_vel_events.clear()
         self.arbitration_events.clear()
         self.evaluation_events.clear()
+        self.stability_events.clear()
 
     def test_complete_safety_transport_pipeline(self) -> None:
         """Verify startup, motion, stop, and staleness over live DDS topics."""
@@ -354,6 +372,7 @@ class TestTitanBrainTransport(unittest.TestCase):
                 and self.node.count_publishers("/cmd_vel") == 1
                 and self.node.count_publishers("/safety/arbitration_status") == 1
                 and self.node.count_publishers("/safety/evaluation_status") == 1
+                and self.node.count_publishers("/safety/stability_status") == 1
             ),
             timeout_sec=_DISCOVERY_TIMEOUT_SEC,
             failure_message="Expected Titan Brain ROS graph was not discovered.",
@@ -481,6 +500,59 @@ class TestTitanBrainTransport(unittest.TestCase):
                     for message, received_ns in self.cmd_vel_events
                 ),
                 failure_message="Emergency zero was not observed on /cmd_vel.",
+            )
+
+        with self.subTest("recovery_holds_stop_until_stable_window_completes"):
+            self._clear_events()
+            observation_stream = self._periodic_stream(
+                lambda: self._publish_observation(clearance_m=1.2)
+            )
+            navigation_stream = self._periodic_stream(
+                self._publish_navigation_command
+            )
+
+            def keep_safe_inputs_fresh() -> None:
+                observation_stream()
+                navigation_stream()
+
+            self._wait_for(
+                lambda: (
+                    any(
+                        message.state
+                        == SafetyStabilityStatus.STATE_RECOVERY_HOLDING
+                        and message.instantaneous_action == "proceed"
+                        and message.effective_action == "emergency_stop"
+                        and message.recovery_active
+                        for message in self.stability_events
+                    )
+                    and any(
+                        message.reason == "emergency_stop"
+                        for message, _received_at_ns in self.arbitration_events
+                    )
+                ),
+                on_cycle=keep_safe_inputs_fresh,
+                failure_message=lambda: (
+                    "Recovery hold did not retain emergency-stop authority; "
+                    f"{self._transport_diagnostics()}"
+                ),
+            )
+            self._wait_for(
+                lambda: (
+                    any(
+                        message.state == SafetyStabilityStatus.STATE_OK
+                        and message.reason == "hold_completed"
+                        for message in self.stability_events
+                    )
+                    and any(
+                        message.reason == "proceed"
+                        for message, _received_at_ns in self.arbitration_events
+                    )
+                ),
+                on_cycle=keep_safe_inputs_fresh,
+                failure_message=lambda: (
+                    "Stable safe stream did not complete recovery hold; "
+                    f"{self._transport_diagnostics()}"
+                ),
             )
 
         with self.subTest("navigation_command_becomes_stale"):

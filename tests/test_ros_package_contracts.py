@@ -81,6 +81,23 @@ def test_titan_brain_message_contracts_are_explicit() -> None:
         "bool is_incident",
         "string detail",
     ]
+    assert _message_fields(messages / "SafetyStabilityStatus.msg") == [
+        "uint8 STATE_OK=0",
+        "uint8 STATE_WARNING=1",
+        "uint8 STATE_E_STOP=2",
+        "uint8 STATE_RECOVERY_HOLDING=3",
+        "std_msgs/Header header",
+        "string schema_version",
+        "uint8 state",
+        "string reason",
+        "string instantaneous_action",
+        "string effective_action",
+        "bool recovery_active",
+        "uint64 hold_elapsed_ns",
+        "uint64 recovery_hold_time_ns",
+        "bool has_release_threshold",
+        "float64 release_threshold_m",
+    ]
     assert _message_fields(messages / "ArbitrationStatus.msg") == [
         "uint8 MODE_PASS_THROUGH=0",
         "uint8 MODE_CLAMPED=1",
@@ -108,6 +125,7 @@ def test_message_package_declares_rosidl_and_message_dependencies() -> None:
     assert '"msg/SafetyObservation.msg"' in cmake
     assert '"msg/DirectionalSafetyObservation.msg"' in cmake
     assert '"msg/SafetyEvaluationStatus.msg"' in cmake
+    assert '"msg/SafetyStabilityStatus.msg"' in cmake
     assert '"msg/ArbitrationStatus.msg"' in cmake
 
 
@@ -167,6 +185,10 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
         "reaction_time_ns",
         "assured_deceleration_mps2",
         "clearance_margin_m",
+        "stability_enabled",
+        "stability_policy_version",
+        "clearance_hysteresis_m",
+        "recovery_hold_time_s",
     ):
         assert f"{required_parameter}:" in config_text
     max_observation_age_sec = _float_parameter(
@@ -182,6 +204,9 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert watchdog_timeout_sec >= max_observation_age_sec
     assert "dynamic_braking_enabled: true" in config_text
     assert "reaction_time_ns: 250000000" in config_text
+    assert "stability_enabled: true" in config_text
+    assert _float_parameter(config_text, "clearance_hysteresis_m") == 0.10
+    assert _float_parameter(config_text, "recovery_hold_time_s") == 0.20
     assert '"config/titan_brain.yaml"' in setup
     assert '"launch/titan_brain.launch.py"' in setup
     launch_text = launch_file.read_text(encoding="utf-8")
@@ -192,6 +217,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert "@pytest.mark.launch_test" in e2e_text
     assert '"/safety/observation"' in e2e_text
     assert '"/safety/directional_observation"' in e2e_text
+    assert '"/safety/stability_status"' in e2e_text
     assert '"/cmd_vel_nav"' in e2e_text
     assert '"/cmd_vel"' in e2e_text
 

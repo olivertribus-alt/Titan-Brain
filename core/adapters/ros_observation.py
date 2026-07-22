@@ -19,7 +19,13 @@ from core.safety import (
     SafetyDecisionResult,
     SafetyObservation,
     SafetyRuleConfig,
+    evaluate_safety,
     run_safety_decision_loop,
+)
+from core.stability import (
+    SafetyStabilityFilter,
+    StabilityConfig,
+    StabilityTransition,
 )
 from core.types.incident import Pose2D, StrictFrozenModel
 
@@ -120,6 +126,8 @@ class RosObservationProcessingResult(StrictFrozenModel):
 
     adaptation: ObservationAdaptation
     decision: SafetyDecisionResult | None = None
+    instantaneous_decision: SafetyDecisionResult | None = None
+    stability_transition: StabilityTransition | None = None
 
     @model_validator(mode="after")
     def validate_state(self) -> Self:
@@ -128,6 +136,14 @@ class RosObservationProcessingResult(StrictFrozenModel):
             raise ValueError(
                 "A decision must exist exactly when adaptation is accepted."
             )
+        stabilization = (
+            self.instantaneous_decision,
+            self.stability_transition,
+        )
+        if (stabilization[0] is None) != (stabilization[1] is None):
+            raise ValueError("Stabilization evidence must be complete or absent.")
+        if not self.adaptation.accepted and stabilization[0] is not None:
+            raise ValueError("Rejected input must not contain stabilization evidence.")
         return self
 
 
@@ -234,16 +250,29 @@ class RosObservationAdapter:
         *,
         config: RosObservationAdapterConfig = DEFAULT_ROS_OBSERVATION_ADAPTER_CONFIG,
         safety_rules: SafetyRuleConfig | None = None,
+        stability_config: StabilityConfig | None = None,
     ) -> None:
         self._store = store
         self._config = config
         self._safety_rules = safety_rules
+        self._stability_filter = (
+            SafetyStabilityFilter(stability_config)
+            if stability_config is not None
+            else None
+        )
         self._last_valid_received_at_ns: int | None = None
 
     @property
     def last_valid_received_at_ns(self) -> int | None:
         """Return receipt time of the last message accepted by the adapter."""
         return self._last_valid_received_at_ns
+
+    @property
+    def last_stability_transition(self) -> StabilityTransition | None:
+        """Return the most recent stabilization transition, if enabled."""
+        if self._stability_filter is None:
+            return None
+        return self._stability_filter.last_transition
 
     def process(
         self,
@@ -261,7 +290,35 @@ class RosObservationAdapter:
         if adaptation.observation is None:
             return RosObservationProcessingResult(adaptation=adaptation)
 
-        if self._safety_rules is None:
+        instantaneous_decision: SafetyDecisionResult | None = None
+        stability_transition: StabilityTransition | None = None
+        if self._stability_filter is not None:
+            last_valid = self._last_valid_received_at_ns
+            if (
+                last_valid is not None
+                and checked_now_ns - last_valid
+                > self._config.watchdog_timeout_ns
+            ):
+                self._stability_filter.force_observation_timeout(
+                    now_ns=checked_now_ns
+                )
+            instantaneous_decision = (
+                evaluate_safety(adaptation.observation)
+                if self._safety_rules is None
+                else evaluate_safety(
+                    adaptation.observation,
+                    self._safety_rules,
+                )
+            )
+            stabilized = self._stability_filter.process(
+                instantaneous_decision,
+                now_ns=checked_now_ns,
+            )
+            decision = stabilized.effective
+            stability_transition = stabilized.transition
+            if decision.is_incident:
+                self._store.save(decision.decision)
+        elif self._safety_rules is None:
             decision = run_safety_decision_loop(adaptation.observation, self._store)
         else:
             decision = run_safety_decision_loop(
@@ -273,6 +330,8 @@ class RosObservationAdapter:
         return RosObservationProcessingResult(
             adaptation=adaptation,
             decision=decision,
+            instantaneous_decision=instantaneous_decision,
+            stability_transition=stability_transition,
         )
 
     def watchdog(self, *, now_ns: int) -> WatchdogReport:

@@ -19,6 +19,7 @@ from core.adapters.ros_observation import (
 from core.braking import BrakingEnvelopeConfig
 from core.incident_store import FileIncidentStore
 from core.safety import SafetyRuleConfig, evaluate_safety
+from core.stability import EvaluatorState, SafetyStabilityFilter, StabilityConfig
 
 NOW_NS = 12_000_000_000
 
@@ -93,7 +94,121 @@ def test_safe_message_is_evaluated_without_creating_incident(tmp_path: Path) -> 
 
     assert result.decision is not None
     assert result.decision.decision.action == "proceed"
+    assert result.instantaneous_decision is None
+    assert result.stability_transition is None
+    assert adapter.last_stability_transition is None
     assert not list(tmp_path.iterdir())
+
+
+def test_adapter_applies_hysteresis_and_hold_before_releasing_stop(
+    tmp_path: Path,
+) -> None:
+    adapter = RosObservationAdapter(
+        FileIncidentStore(tmp_path),
+        stability_config=StabilityConfig(
+            policy_version="TB-STABILITY-0.1.0",
+            clearance_hysteresis_m=0.1,
+            recovery_hold_time_ns=200,
+        ),
+    )
+
+    danger = adapter.process(_message(), now_ns=NOW_NS)
+    holding = adapter.process(
+        _message(timestamp_ns=NOW_NS + 1, clearance_m=0.7),
+        now_ns=NOW_NS + 1,
+    )
+    released = adapter.process(
+        _message(timestamp_ns=NOW_NS + 201, clearance_m=0.7),
+        now_ns=NOW_NS + 201,
+    )
+
+    assert danger.stability_transition is not None
+    assert danger.stability_transition.state is EvaluatorState.E_STOP
+    assert holding.instantaneous_decision is not None
+    assert holding.instantaneous_decision.decision.action == "proceed"
+    assert holding.decision is not None
+    assert holding.decision.decision.action == "emergency_stop"
+    assert holding.stability_transition is not None
+    assert holding.stability_transition.state is EvaluatorState.RECOVERY_HOLDING
+    assert released.decision is not None
+    assert released.decision.decision.action == "proceed"
+    assert released.stability_transition is not None
+    assert released.stability_transition.state is EvaluatorState.OK
+    assert adapter.last_stability_transition == released.stability_transition
+    assert len(list(tmp_path.glob("*.json"))) == 2
+
+
+def test_adapter_noise_cancels_recovery_hold_without_refreshing_start(
+    tmp_path: Path,
+) -> None:
+    adapter = RosObservationAdapter(
+        FileIncidentStore(tmp_path),
+        stability_config=StabilityConfig(
+            policy_version="TB-STABILITY-0.1.0",
+            clearance_hysteresis_m=0.1,
+            recovery_hold_time_ns=200,
+        ),
+    )
+    adapter.process(_message(), now_ns=NOW_NS)
+    started = adapter.process(
+        _message(timestamp_ns=NOW_NS + 1, clearance_m=0.7),
+        now_ns=NOW_NS + 1,
+    )
+    cancelled = adapter.process(
+        _message(timestamp_ns=NOW_NS + 100, clearance_m=0.59),
+        now_ns=NOW_NS + 100,
+    )
+    restarted = adapter.process(
+        _message(timestamp_ns=NOW_NS + 150, clearance_m=0.7),
+        now_ns=NOW_NS + 150,
+    )
+
+    assert started.stability_transition is not None
+    assert started.stability_transition.recovery_started_at_ns == NOW_NS + 1
+    assert cancelled.stability_transition is not None
+    assert cancelled.stability_transition.state is EvaluatorState.E_STOP
+    assert cancelled.stability_transition.recovery_started_at_ns is None
+    assert restarted.stability_transition is not None
+    assert restarted.stability_transition.recovery_started_at_ns == NOW_NS + 150
+
+
+def test_adapter_watchdog_gap_restarts_full_recovery_window(
+    tmp_path: Path,
+) -> None:
+    adapter = RosObservationAdapter(
+        FileIncidentStore(tmp_path),
+        config=RosObservationAdapterConfig(
+            max_observation_age_ns=100,
+            watchdog_timeout_ns=100,
+        ),
+        stability_config=StabilityConfig(
+            policy_version="TB-STABILITY-0.1.0",
+            clearance_hysteresis_m=0.1,
+            recovery_hold_time_ns=100,
+        ),
+    )
+    adapter.process(_message(), now_ns=NOW_NS)
+    adapter.process(
+        _message(timestamp_ns=NOW_NS + 1, clearance_m=0.7),
+        now_ns=NOW_NS + 1,
+    )
+
+    restarted = adapter.process(
+        _message(timestamp_ns=NOW_NS + 102, clearance_m=0.7),
+        now_ns=NOW_NS + 102,
+    )
+    released = adapter.process(
+        _message(timestamp_ns=NOW_NS + 202, clearance_m=0.7),
+        now_ns=NOW_NS + 202,
+    )
+
+    assert restarted.stability_transition is not None
+    assert restarted.stability_transition.state is EvaluatorState.RECOVERY_HOLDING
+    assert restarted.stability_transition.recovery_started_at_ns == NOW_NS + 102
+    assert restarted.decision is not None
+    assert restarted.decision.decision.action == "emergency_stop"
+    assert released.stability_transition is not None
+    assert released.stability_transition.state is EvaluatorState.OK
 
 
 def test_explicit_safety_rules_are_forwarded_to_existing_evaluator(
@@ -320,6 +435,13 @@ def test_result_models_reject_internally_inconsistent_states() -> None:
         now_ns=NOW_NS,
     )
     decision = evaluate_safety(accepted.observation)
+    stabilized = SafetyStabilityFilter(
+        StabilityConfig(
+            policy_version="TB-STABILITY-0.1.0",
+            clearance_hysteresis_m=0.1,
+            recovery_hold_time_ns=200,
+        )
+    ).process(decision, now_ns=NOW_NS)
 
     with pytest.raises(ValidationError, match="Accepted adaptation"):
         ObservationAdaptation(status=ObservationAdaptationStatus.ACCEPTED)
@@ -333,3 +455,15 @@ def test_result_models_reject_internally_inconsistent_states() -> None:
         RosObservationProcessingResult(adaptation=accepted)
     with pytest.raises(ValidationError, match="decision must exist"):
         RosObservationProcessingResult(adaptation=rejected, decision=decision)
+    with pytest.raises(ValidationError, match="evidence must be complete"):
+        RosObservationProcessingResult(
+            adaptation=accepted,
+            decision=decision,
+            instantaneous_decision=decision,
+        )
+    with pytest.raises(ValidationError, match="Rejected input"):
+        RosObservationProcessingResult(
+            adaptation=rejected,
+            instantaneous_decision=decision,
+            stability_transition=stabilized.transition,
+        )

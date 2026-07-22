@@ -18,6 +18,12 @@ from core.safety import (
     evaluate_safety,
     run_safety_decision_loop,
 )
+from core.stability import (
+    EvaluatorState,
+    SafetyStabilityFilter,
+    StabilityConfig,
+    StabilityReason,
+)
 from core.types.incident import Pose2D
 
 
@@ -275,6 +281,50 @@ def test_dynamic_evaluation_is_bit_deterministic() -> None:
     assert all(result == results[0] for result in results)
     assert len(set(serialized)) == 1
     assert len(hashes) == 1
+
+
+def test_dynamic_required_clearance_drives_hysteresis_release_threshold() -> None:
+    filter_ = SafetyStabilityFilter(
+        StabilityConfig(
+            policy_version="TB-STABILITY-0.1.0",
+            clearance_hysteresis_m=0.1,
+            recovery_hold_time_ns=200,
+        )
+    )
+    danger = filter_.process(
+        evaluate_safety(
+            _observation(clearance_m=0.8, linear_x_mps=0.8),
+            _rules(),
+        ),
+        now_ns=0,
+    )
+    noisy_safe = filter_.process(
+        evaluate_safety(
+            _observation(clearance_m=0.62, linear_x_mps=0.1),
+            _rules(),
+        ),
+        now_ns=1,
+    )
+    holding = filter_.process(
+        evaluate_safety(
+            _observation(clearance_m=0.63, linear_x_mps=0.1),
+            _rules(),
+        ),
+        now_ns=2,
+    )
+    released = filter_.process(
+        evaluate_safety(
+            _observation(clearance_m=0.63, linear_x_mps=0.1),
+            _rules(),
+        ),
+        now_ns=202,
+    )
+
+    assert danger.transition.state is EvaluatorState.E_STOP
+    assert noisy_safe.transition.reason is StabilityReason.HYSTERESIS_NOT_MET
+    assert noisy_safe.transition.release_threshold_m == pytest.approx(0.63)
+    assert holding.transition.state is EvaluatorState.RECOVERY_HOLDING
+    assert released.transition.state is EvaluatorState.OK
 
 
 @pytest.mark.parametrize(

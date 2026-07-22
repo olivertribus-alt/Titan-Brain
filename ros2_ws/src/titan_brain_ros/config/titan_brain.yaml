@@ -15,6 +15,10 @@ safety_observation_node:
     reaction_time_ns: 250000000
     assured_deceleration_mps2: 1.0
     clearance_margin_m: 0.50
+    stability_enabled: true
+    stability_policy_version: "TB-STABILITY-0.1.0"
+    clearance_hysteresis_m: 0.10
+    recovery_hold_time_s: 0.20
 
 velocity_arbiter_node:
   ros__parameters:

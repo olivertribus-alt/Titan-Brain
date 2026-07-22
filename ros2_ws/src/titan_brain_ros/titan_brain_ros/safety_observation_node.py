@@ -23,6 +23,7 @@ from titan_brain_msgs.msg import (
 )
 from titan_brain_msgs.msg import SafetyEvaluationStatus as SafetyEvaluationStatusMsg
 from titan_brain_msgs.msg import SafetyObservation as SafetyObservationMsg
+from titan_brain_msgs.msg import SafetyStabilityStatus as SafetyStabilityStatusMsg
 
 from core.adapters.ros_geometry import (
     PlanarTransform,
@@ -38,9 +39,11 @@ from core.adapters.ros_observation import (
 from core.braking import BrakingEnvelopeConfig
 from core.incident_store import FileIncidentStore, IncidentStoreError
 from core.safety import SafetyRuleConfig
+from core.stability import EvaluatorState, StabilityConfig, StabilityTransition
 from core.types.incident import Pose2D
 
 _STATUS_SCHEMA_VERSION = "0.1"
+_STABILITY_STATUS_SCHEMA_VERSION = "0.1"
 ObservationMessage = SafetyObservationMsg | DirectionalSafetyObservationMsg
 
 
@@ -113,6 +116,17 @@ def _required_positive_integer_parameter(node: Node, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError(f"ROS parameter {name!r} must be a positive integer")
     return value
+
+
+def _stability_state_code(transition: StabilityTransition) -> int:
+    return {
+        EvaluatorState.OK: SafetyStabilityStatusMsg.STATE_OK,
+        EvaluatorState.WARNING: SafetyStabilityStatusMsg.STATE_WARNING,
+        EvaluatorState.E_STOP: SafetyStabilityStatusMsg.STATE_E_STOP,
+        EvaluatorState.RECOVERY_HOLDING: (
+            SafetyStabilityStatusMsg.STATE_RECOVERY_HOLDING
+        ),
+    }[transition.state]
 
 
 class SafetyObservationNode(Node):
@@ -194,6 +208,31 @@ class SafetyObservationNode(Node):
                 ),
             )
 
+        stability_enabled = bool(
+            self.declare_parameter("stability_enabled", False).value
+        )
+        stability_config: StabilityConfig | None = None
+        if stability_enabled:
+            stability_config = StabilityConfig(
+                policy_version=_required_text_parameter(
+                    self,
+                    "stability_policy_version",
+                ),
+                clearance_hysteresis_m=_required_finite_parameter(
+                    self,
+                    "clearance_hysteresis_m",
+                    allow_zero=True,
+                ),
+                recovery_hold_time_ns=_seconds_to_ns(
+                    _required_finite_parameter(
+                        self,
+                        "recovery_hold_time_s",
+                        allow_zero=False,
+                    ),
+                    name="recovery_hold_time_s",
+                ),
+            )
+
         timer_period_ns = _seconds_to_ns(
             timer_period_sec,
             name="timer_period_sec",
@@ -216,6 +255,7 @@ class SafetyObservationNode(Node):
             ),
         )
         self._target_frame = target_frame
+        self._stability_config = stability_config
         self._tf_timeout = Duration(
             nanoseconds=_seconds_to_ns(tf_timeout_sec, name="tf_timeout_sec")
         )
@@ -223,6 +263,7 @@ class SafetyObservationNode(Node):
             FileIncidentStore(Path(incident_store_path)),
             config=adapter_config,
             safety_rules=safety_rules,
+            stability_config=stability_config,
         )
 
         self._tf_buffer = Buffer()
@@ -230,6 +271,11 @@ class SafetyObservationNode(Node):
         self._status_publisher = self.create_publisher(
             SafetyEvaluationStatusMsg,
             "/safety/evaluation_status",
+            status_qos_profile(),
+        )
+        self._stability_status_publisher = self.create_publisher(
+            SafetyStabilityStatusMsg,
+            "/safety/stability_status",
             status_qos_profile(),
         )
         self._observation_subscription = self.create_subscription(
@@ -378,6 +424,39 @@ class SafetyObservationNode(Node):
             status.rule = decision.rule
             status.is_incident = result.decision.is_incident
         self._status_publisher.publish(status)
+        self._publish_stability_status(now, result)
+
+    def _publish_stability_status(
+        self,
+        now: Time,
+        result: RosObservationProcessingResult,
+    ) -> None:
+        transition = result.stability_transition
+        effective = result.decision
+        config = self._stability_config
+        if transition is None or effective is None or config is None:
+            return
+
+        status = SafetyStabilityStatusMsg()
+        status.header.stamp = now.to_msg()
+        status.header.frame_id = self._target_frame
+        status.schema_version = _STABILITY_STATUS_SCHEMA_VERSION
+        status.state = _stability_state_code(transition)
+        status.reason = transition.reason.value
+        status.instantaneous_action = (
+            result.instantaneous_decision.decision.action
+            if result.instantaneous_decision is not None
+            else effective.decision.action
+        )
+        status.effective_action = effective.decision.action
+        status.recovery_active = (
+            transition.state is EvaluatorState.RECOVERY_HOLDING
+        )
+        status.hold_elapsed_ns = transition.hold_elapsed_ns or 0
+        status.recovery_hold_time_ns = config.recovery_hold_time_ns
+        status.has_release_threshold = transition.release_threshold_m is not None
+        status.release_threshold_m = transition.release_threshold_m or 0.0
+        self._stability_status_publisher.publish(status)
 
     def _publish_transport_failure(
         self,
