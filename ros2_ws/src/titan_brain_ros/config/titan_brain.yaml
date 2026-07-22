@@ -15,6 +15,7 @@ safety_observation_node:
     reaction_time_ns: 250000000
     assured_deceleration_mps2: 1.0
     clearance_margin_m: 0.50
+    motion_envelope_frame_id: "base_link"
     stability_enabled: true
     stability_policy_version: "TB-STABILITY-0.1.0"
     clearance_hysteresis_m: 0.10
@@ -30,6 +31,7 @@ velocity_arbiter_node:
     output_frame_id: "base_link"
     command_stale_threshold_sec: 0.10
     safety_stale_threshold_sec: 0.25
+    motion_envelope_stale_threshold_sec: 0.05
     timer_period_sec: 0.01
     arbitration_latency_budget_sec: 0.03
     max_abs_linear_x: 0.8

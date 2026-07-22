@@ -136,6 +136,18 @@ def test_titan_brain_message_contracts_are_explicit() -> None:
         "string correlation_id",
         "uint64 sequence_id",
     ]
+    assert _message_fields(messages / "PermittedMotionEnvelope.msg") == [
+        "std_msgs/Header header",
+        "string policy_version",
+        "string correlation_id",
+        "uint64 sequence_id",
+        "float64 min_linear_x_mps",
+        "float64 max_linear_x_mps",
+        "float64 min_linear_y_mps",
+        "float64 max_linear_y_mps",
+        "float64 min_angular_z_radps",
+        "float64 max_angular_z_radps",
+    ]
     assert _message_fields(messages / "ArbitrationStatus.msg") == [
         "uint8 MODE_PASS_THROUGH=0",
         "uint8 MODE_CLAMPED=1",
@@ -148,6 +160,9 @@ def test_titan_brain_message_contracts_are_explicit() -> None:
         "bool is_safe",
         "uint64 command_sequence_id",
         "uint64 safety_intent_sequence_id",
+        "string motion_envelope_correlation_id",
+        "uint64 motion_envelope_sequence_id",
+        "uint64 motion_envelope_timestamp_ns",
         "string arbitration_latency_status",
         "bool arbitration_timing_valid",
         "bool arbitration_within_budget",
@@ -211,6 +226,7 @@ def test_message_package_declares_rosidl_and_message_dependencies() -> None:
     assert '"msg/SafetyStabilityStatus.msg"' in cmake
     assert '"msg/EvaluatorObservabilityStatus.msg"' in cmake
     assert '"msg/SafetyIntent.msg"' in cmake
+    assert '"msg/PermittedMotionEnvelope.msg"' in cmake
     assert '"msg/ArbitrationStatus.msg"' in cmake
     assert '"msg/CommandPathObservabilityStatus.msg"' in cmake
 
@@ -263,6 +279,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
         "output_frame_id",
         "command_stale_threshold_sec",
         "safety_stale_threshold_sec",
+        "motion_envelope_stale_threshold_sec",
         "timer_period_sec",
         "max_abs_linear_x",
         "max_abs_linear_y",
@@ -279,6 +296,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
         "reaction_time_ns",
         "assured_deceleration_mps2",
         "clearance_margin_m",
+        "motion_envelope_frame_id",
         "stability_enabled",
         "stability_policy_version",
         "clearance_hysteresis_m",
@@ -332,6 +350,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert '"/safety/evaluator_observability"' in e2e_text
     assert '"/safety/command_path_observability"' in e2e_text
     assert '"/safety/intent"' in e2e_text
+    assert '"/safety/permitted_motion_envelope"' in e2e_text
     assert '"/cmd_vel_raw"' in e2e_text
     assert '"/cmd_vel"' in e2e_text
 

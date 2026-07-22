@@ -30,6 +30,7 @@ from titan_brain_msgs.msg import (
     CommandPathObservabilityStatus,
     DirectionalSafetyObservation,
     EvaluatorObservabilityStatus,
+    PermittedMotionEnvelope,
     SafetyEvaluationStatus,
     SafetyIntent,
     SafetyObservation,
@@ -99,6 +100,7 @@ class TestTitanBrainTransport(unittest.TestCase):
         cls.observability_events: list[EvaluatorObservabilityStatus] = []
         cls.stability_events: list[SafetyStabilityStatus] = []
         cls.intent_events: list[SafetyIntent] = []
+        cls.motion_envelope_events: list[PermittedMotionEnvelope] = []
         cls.command_path_events: list[CommandPathObservabilityStatus] = []
 
         cls.observation_publisher = cls.node.create_publisher(
@@ -152,6 +154,12 @@ class TestTitanBrainTransport(unittest.TestCase):
             cls._on_intent,
             _status_qos(),
         )
+        cls.motion_envelope_subscription = cls.node.create_subscription(
+            PermittedMotionEnvelope,
+            "/safety/permitted_motion_envelope",
+            cls._on_motion_envelope,
+            _status_qos(),
+        )
         cls.command_path_subscription = cls.node.create_subscription(
             CommandPathObservabilityStatus,
             "/safety/command_path_observability",
@@ -199,6 +207,10 @@ class TestTitanBrainTransport(unittest.TestCase):
     @classmethod
     def _on_intent(cls, message: SafetyIntent) -> None:
         cls.intent_events.append(message)
+
+    @classmethod
+    def _on_motion_envelope(cls, message: PermittedMotionEnvelope) -> None:
+        cls.motion_envelope_events.append(message)
 
     @classmethod
     def _on_command_path(cls, message: CommandPathObservabilityStatus) -> None:
@@ -316,6 +328,15 @@ class TestTitanBrainTransport(unittest.TestCase):
             (message.state, message.sequence_id, message.correlation_id)
             for message in self.intent_events[-10:]
         ]
+        envelope_states = [
+            (
+                message.sequence_id,
+                message.correlation_id,
+                message.min_linear_x_mps,
+                message.max_linear_x_mps,
+            )
+            for message in self.motion_envelope_events[-10:]
+        ]
         command_path_states = [
             (
                 message.arbitration_reason,
@@ -330,6 +351,7 @@ class TestTitanBrainTransport(unittest.TestCase):
             f"recent stability states={stability_states!r}; "
             f"recent observability states={observability_states!r}; "
             f"recent intents={intent_states!r}; "
+            f"recent envelopes={envelope_states!r}; "
             f"recent command paths={command_path_states!r}"
         )
 
@@ -340,6 +362,7 @@ class TestTitanBrainTransport(unittest.TestCase):
         evaluation_action: str,
         arbitration_reason: str,
         linear_x_mps: float = 0.4,
+        command_linear_x_mps: float | None = None,
         reverse_clearance_m: float = 10.0,
         left_clearance_m: float = 10.0,
         right_clearance_m: float = 10.0,
@@ -360,9 +383,14 @@ class TestTitanBrainTransport(unittest.TestCase):
             )
 
         observation_stream = self._periodic_stream(publish_observation)
+        requested_linear_x_mps = (
+            linear_x_mps
+            if command_linear_x_mps is None
+            else command_linear_x_mps
+        )
         navigation_stream = self._periodic_stream(
             lambda: self._publish_navigation_command(
-                linear_x_mps=linear_x_mps
+                linear_x_mps=requested_linear_x_mps
             )
         )
 
@@ -414,11 +442,21 @@ class TestTitanBrainTransport(unittest.TestCase):
                 for intent in self.intent_events
             ):
                 continue
+            if not any(
+                envelope.correlation_id == path.correlation_id
+                and envelope.sequence_id == path.safety_intent_sequence_id
+                for envelope in self.motion_envelope_events
+            ):
+                continue
             if any(
                 status.correlation_id == path.correlation_id
                 and status.reason == path.arbitration_reason
                 and status.command_sequence_id == path.command_sequence_id
                 and status.safety_intent_sequence_id
+                == path.safety_intent_sequence_id
+                and status.motion_envelope_correlation_id
+                == path.correlation_id
+                and status.motion_envelope_sequence_id
                 == path.safety_intent_sequence_id
                 for status, _received_at_ns in self.arbitration_events
             ):
@@ -449,6 +487,7 @@ class TestTitanBrainTransport(unittest.TestCase):
         self.evaluation_events.clear()
         self.stability_events.clear()
         self.intent_events.clear()
+        self.motion_envelope_events.clear()
         self.command_path_events.clear()
 
     def test_complete_safety_transport_pipeline(self) -> None:
@@ -464,6 +503,10 @@ class TestTitanBrainTransport(unittest.TestCase):
                 and self.node.count_publishers("/safety/evaluation_status") == 1
                 and self.node.count_publishers("/safety/stability_status") == 1
                 and self.node.count_publishers("/safety/intent") == 1
+                and self.node.count_publishers(
+                    "/safety/permitted_motion_envelope"
+                )
+                == 1
                 and self.node.count_publishers(
                     "/safety/command_path_observability"
                 )
@@ -519,6 +562,86 @@ class TestTitanBrainTransport(unittest.TestCase):
                 evaluation_action="emergency_stop",
                 arbitration_reason="e_stop_active",
             )
+
+        with self.subTest("aggressive_command_cannot_exceed_envelope"):
+            self._clear_events()
+            self._stream_inputs_until_arbitration(
+                clearance_m=0.8,
+                linear_x_mps=0.1,
+                command_linear_x_mps=3.0,
+                evaluation_action="proceed",
+                arbitration_reason="motion_envelope_clamped",
+            )
+            clamped_status = next(
+                status
+                for status, _received_at_ns in self.arbitration_events
+                if status.reason == "motion_envelope_clamped"
+            )
+            self.assertEqual(
+                clamped_status.mode,
+                ArbitrationStatus.MODE_CLAMPED,
+            )
+            self.assertGreater(clamped_status.commanded_twist.linear.x, 0.0)
+            self.assertLessEqual(
+                clamped_status.commanded_twist.linear.x,
+                0.57,
+            )
+            self.assertLess(clamped_status.commanded_twist.linear.x, 3.0)
+            self.assertEqual(clamped_status.commanded_twist.angular.z, 0.0)
+
+        with self.subTest("same_sequence_envelope_mutation_fails_closed"):
+            source = self.motion_envelope_events[-1]
+            fault = PermittedMotionEnvelope()
+            fault.header = source.header
+            fault.policy_version = source.policy_version
+            fault.correlation_id = f"{source.correlation_id}-mutated"
+            fault.sequence_id = source.sequence_id
+            fault.min_linear_x_mps = source.min_linear_x_mps
+            fault.max_linear_x_mps = source.max_linear_x_mps
+            fault.min_linear_y_mps = source.min_linear_y_mps
+            fault.max_linear_y_mps = source.max_linear_y_mps
+            fault.min_angular_z_radps = source.min_angular_z_radps
+            fault.max_angular_z_radps = source.max_angular_z_radps
+            fault_publisher = self.node.create_publisher(
+                PermittedMotionEnvelope,
+                "/safety/permitted_motion_envelope",
+                _status_qos(),
+            )
+            try:
+                self._clear_events()
+                fault_stream = self._periodic_stream(
+                    lambda: fault_publisher.publish(fault)
+                )
+                command_stream = self._periodic_stream(
+                    lambda: self._publish_navigation_command(
+                        linear_x_mps=3.0
+                    )
+                )
+
+                def inject_fault() -> None:
+                    fault_stream()
+                    command_stream()
+
+                self._wait_for_arbitration_reason(
+                    "motion_envelope_invalid",
+                    on_cycle=inject_fault,
+                )
+                fault_status = next(
+                    status
+                    for status, _received_at_ns in self.arbitration_events
+                    if status.reason == "motion_envelope_invalid"
+                )
+                self.assertEqual(
+                    fault_status.mode,
+                    ArbitrationStatus.MODE_FORCED_ZERO,
+                )
+                self.assertEqual(fault_status.commanded_twist.linear.x, 0.0)
+                self.assertEqual(
+                    fault_status.motion_envelope_correlation_id,
+                    fault.correlation_id,
+                )
+            finally:
+                self.node.destroy_publisher(fault_publisher)
 
         with self.subTest("legacy_input_fails_closed_in_dynamic_mode"):
             self._clear_events()
@@ -707,6 +830,23 @@ class TestTitanBrainTransport(unittest.TestCase):
             self.cmd_vel_events.clear()
             navigation_stream = self._periodic_stream(
                 self._publish_navigation_command
+            )
+            self._wait_for_arbitration_reason(
+                "motion_envelope_timeout",
+                on_cycle=navigation_stream,
+            )
+            envelope_timeout_status = next(
+                message
+                for message, _received_at_ns in self.arbitration_events
+                if message.reason == "motion_envelope_timeout"
+            )
+            self.assertEqual(
+                envelope_timeout_status.mode,
+                ArbitrationStatus.MODE_FORCED_ZERO,
+            )
+            self.assertEqual(
+                envelope_timeout_status.commanded_twist.linear.x,
+                0.0,
             )
             self._wait_for_arbitration_reason(
                 "e_stop_active",

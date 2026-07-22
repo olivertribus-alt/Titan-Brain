@@ -11,6 +11,9 @@ string correlation_id
 bool is_safe
 uint64 command_sequence_id
 uint64 safety_intent_sequence_id
+string motion_envelope_correlation_id
+uint64 motion_envelope_sequence_id
+uint64 motion_envelope_timestamp_ns
 string arbitration_latency_status
 bool arbitration_timing_valid
 bool arbitration_within_budget

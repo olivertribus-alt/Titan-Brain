@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from enum import StrEnum
-from typing import Self, TypeAlias
+from typing import Self, TypeAlias, cast
 
 from pydantic import Field, ValidationError, field_validator, model_validator
 
@@ -71,6 +71,14 @@ class ArbitrationReason(StrEnum):
     WARNING_TEMPORARY_ZERO = "warning_temporary_zero"
     WARNING_SHAPED = "warning_shaped"
     WARNING_UNMODIFIED = "warning_unmodified"
+    MOTION_ENVELOPE_MISSING = "motion_envelope_missing"
+    MOTION_ENVELOPE_INVALID = "motion_envelope_invalid"
+    MOTION_ENVELOPE_FRAME_MISMATCH = "motion_envelope_frame_mismatch"
+    MOTION_ENVELOPE_CLAMPED = "motion_envelope_clamped"
+    MOTION_ENVELOPE_CLOCK_REGRESSION = "motion_envelope_clock_regression"
+    MOTION_ENVELOPE_TIMEOUT = "motion_envelope_timeout"
+    MOTION_ENVELOPE_INTENT_MISMATCH = "motion_envelope_intent_mismatch"
+    MOTION_ENVELOPE_COMMAND_REQUIRED = "motion_envelope_command_required"
 
 
 class SafetyIntentState(StrEnum):
@@ -100,6 +108,7 @@ class SafetyIntent(StrictFrozenModel):
     timestamp_ns: int = Field(ge=0)
     correlation_id: str = Field(min_length=1)
     sequence_id: int = Field(gt=0)
+    source_sequence_id: int | None = Field(default=None, gt=0)
 
     @field_validator("state", mode="before")
     @classmethod
@@ -108,6 +117,35 @@ class SafetyIntent(StrictFrozenModel):
         if isinstance(value, str):
             return SafetyIntentState(value)
         return value
+
+
+class PermittedMotionEnvelope(StrictFrozenModel):
+    """Timestamped asymmetric authority consumed by the live arbiter."""
+
+    policy_version: str = Field(min_length=1)
+    timestamp_ns: int = Field(ge=0)
+    frame_id: str = Field(min_length=1)
+    correlation_id: str = Field(min_length=1)
+    sequence_id: int = Field(gt=0)
+    ingress_sequence_id: int = Field(gt=0)
+    min_linear_x_mps: float = Field(le=0.0)
+    max_linear_x_mps: float = Field(ge=0.0)
+    min_linear_y_mps: float = Field(le=0.0)
+    max_linear_y_mps: float = Field(ge=0.0)
+    min_angular_z_radps: float = Field(le=0.0)
+    max_angular_z_radps: float = Field(ge=0.0)
+
+    @model_validator(mode="after")
+    def enforce_fail_closed_angular_policy(self) -> Self:
+        """Reject angular authority until swept-footprint proof exists."""
+        if (
+            self.min_angular_z_radps != 0.0
+            or self.max_angular_z_radps != 0.0
+        ):
+            raise ValueError(
+                "angular limits must remain zero without a swept-footprint model"
+            )
+        return self
 
 
 class SafetyState(StrictFrozenModel):
@@ -142,6 +180,12 @@ class VelocityArbiterConfig(StrictFrozenModel):
     output_frame_id: str = Field(min_length=1)
     command_stale_threshold_ns: int = Field(gt=0)
     safety_stale_threshold_ns: int = Field(gt=0)
+    # Keep the legacy non-envelope arbiter constructible while giving the
+    # envelope-aware path a conservative default budget.
+    motion_envelope_stale_threshold_ns: int = Field(
+        default=50_000_000,
+        gt=0,
+    )
     max_abs_linear_x: float = Field(ge=0.0)
     max_abs_linear_y: float = Field(ge=0.0)
     max_abs_angular_z: float = Field(ge=0.0)
@@ -189,6 +233,7 @@ class ArbitrationResult(StrictFrozenModel):
             if self.reason not in {
                 ArbitrationReason.CLAMP_POLICY,
                 ArbitrationReason.WARNING_SHAPED,
+                ArbitrationReason.MOTION_ENVELOPE_CLAMPED,
             }:
                 raise ValueError("CLAMPED requires a shaping policy reason")
         else:
@@ -197,6 +242,7 @@ class ArbitrationResult(StrictFrozenModel):
                 ArbitrationReason.CLAMP_POLICY,
                 ArbitrationReason.WARNING_SHAPED,
                 ArbitrationReason.WARNING_UNMODIFIED,
+                ArbitrationReason.MOTION_ENVELOPE_CLAMPED,
             }:
                 raise ValueError("FORCED_ZERO requires a fail-safe reason")
             if any(
@@ -214,6 +260,7 @@ class ArbitrationResult(StrictFrozenModel):
 VelocityInput: TypeAlias = DesiredVelocity | Mapping[str, object] | None
 SafetyInput: TypeAlias = SafetyState | Mapping[str, object] | None
 IntentInput: TypeAlias = SafetyIntent | Mapping[str, object] | None
+EnvelopeInput: TypeAlias = PermittedMotionEnvelope | Mapping[str, object] | None
 
 
 def _checked_now_ns(value: object) -> int | None:
@@ -257,8 +304,26 @@ def _parse_safety_intent(
         return None, True
 
 
+def _parse_motion_envelope(
+    value: EnvelopeInput,
+) -> tuple[PermittedMotionEnvelope | None, bool]:
+    if value is None:
+        return None, False
+    if isinstance(value, PermittedMotionEnvelope):
+        return value, True
+    try:
+        return PermittedMotionEnvelope.model_validate(value), True
+    except ValidationError:
+        return None, True
+
+
 def _clamp(value: float, limit: float) -> float:
     clamped = max(-limit, min(limit, value))
+    return 0.0 if clamped == 0.0 else clamped
+
+
+def _clamp_range(value: float, minimum: float, maximum: float) -> float:
+    clamped = max(minimum, min(maximum, value))
     return 0.0 if clamped == 0.0 else clamped
 
 
@@ -554,6 +619,71 @@ class DynamicSafetyCommandArbiter:
             correlation_id=correlation_id,
         )
 
+    def _envelope_reason_for_recovery(
+        self,
+        desired_velocity: VelocityInput,
+        safety_intent: IntentInput,
+        motion_envelope: EnvelopeInput,
+        *,
+        now_ns: int,
+    ) -> ArbitrationReason | None:
+        """Return a current envelope fault that explains a recovery stop.
+
+        ``evaluate`` remains the authority for the recovery latch and all
+        safety-intent checks.  When it has already forced zero for a generic
+        recovery reason, this secondary inspection gives a simultaneously
+        invalid envelope its more actionable audit reason without releasing
+        the latch.
+        """
+        intent, _ = _parse_safety_intent(safety_intent)
+        # An explicit RECOVERY_HOLDING intent is itself authoritative.  Only
+        # a recovery latch attached to a NORMAL intent may be reclassified by
+        # a more specific current-envelope audit reason.
+        if intent is None or intent.state is not SafetyIntentState.NORMAL:
+            return None
+
+        envelope, envelope_was_supplied = _parse_motion_envelope(
+            motion_envelope
+        )
+        if envelope is None:
+            return (
+                ArbitrationReason.MOTION_ENVELOPE_INVALID
+                if envelope_was_supplied
+                else ArbitrationReason.MOTION_ENVELOPE_MISSING
+            )
+        if envelope.frame_id != self._config.output_frame_id:
+            return ArbitrationReason.MOTION_ENVELOPE_FRAME_MISMATCH
+
+        source_sequence_id = (
+            intent.source_sequence_id
+            if intent.source_sequence_id is not None
+            else intent.sequence_id
+        )
+        if (
+            envelope.correlation_id != intent.correlation_id
+            or envelope.sequence_id != source_sequence_id
+        ):
+            return ArbitrationReason.MOTION_ENVELOPE_INTENT_MISMATCH
+
+        envelope_age_ns = now_ns - envelope.timestamp_ns
+        if envelope_age_ns < 0:
+            return ArbitrationReason.MOTION_ENVELOPE_CLOCK_REGRESSION
+        if envelope_age_ns >= self._config.motion_envelope_stale_threshold_ns:
+            return ArbitrationReason.MOTION_ENVELOPE_TIMEOUT
+
+        velocity, _ = _parse_velocity(desired_velocity)
+        # A command that predates both the envelope and its matched intent is
+        # an envelope-ordering fault.  If the envelope arrived after the
+        # NORMAL intent, the recovery release guard remains the more precise
+        # authority over the stale command.
+        if (
+            velocity is not None
+            and velocity.sequence_id <= envelope.ingress_sequence_id
+            and envelope.ingress_sequence_id <= intent.sequence_id
+        ):
+            return ArbitrationReason.MOTION_ENVELOPE_COMMAND_REQUIRED
+        return None
+
     def _latch(self, intent: SafetyIntent | None) -> None:
         self._requires_new_normal = True
         self._release_sequence_id = None
@@ -737,4 +867,150 @@ class DynamicSafetyCommandArbiter:
             reason=ArbitrationReason.PROCEED,
             policy_version=self._config.policy_version,
             correlation_id=correlation_id,
+        )
+
+    def evaluate_with_envelope(
+        self,
+        desired_velocity: VelocityInput,
+        safety_intent: IntentInput,
+        motion_envelope: EnvelopeInput,
+        *,
+        now_ns: object,
+    ) -> ArbitrationResult:
+        """Apply mandatory asymmetric motion authority after safety intent."""
+        result = self.evaluate(
+            desired_velocity,
+            safety_intent,
+            now_ns=now_ns,
+        )
+        if result.mode is ArbitrationMode.FORCED_ZERO:
+            if result.reason in {
+                ArbitrationReason.RECOVERY_HOLDING,
+                ArbitrationReason.RECOVERY_COMMAND_REQUIRED,
+            }:
+                checked_now_ns = _checked_now_ns(now_ns)
+                if checked_now_ns is not None:
+                    envelope_reason = self._envelope_reason_for_recovery(
+                        desired_velocity,
+                        safety_intent,
+                        motion_envelope,
+                        now_ns=checked_now_ns,
+                    )
+                    if envelope_reason is not None:
+                        return self._zero(
+                            envelope_reason,
+                            timestamp_ns=result.command.timestamp_ns,
+                            correlation_id=result.correlation_id,
+                        )
+            return result
+
+        # ``evaluate`` can only produce a non-zero result for a valid intent;
+        # retain that parsed authority so every envelope fault can latch the
+        # recovery guard with the exact correlation context.
+        intent = cast(
+            SafetyIntent,
+            _parse_safety_intent(safety_intent)[0],
+        )
+
+        envelope, envelope_was_supplied = _parse_motion_envelope(
+            motion_envelope
+        )
+        if envelope is None:
+            self._latch(intent)
+            return self._zero(
+                (
+                    ArbitrationReason.MOTION_ENVELOPE_INVALID
+                    if envelope_was_supplied
+                    else ArbitrationReason.MOTION_ENVELOPE_MISSING
+                ),
+                timestamp_ns=result.command.timestamp_ns,
+                correlation_id=result.correlation_id,
+            )
+        if envelope.frame_id != self._config.output_frame_id:
+            self._latch(intent)
+            return self._zero(
+                ArbitrationReason.MOTION_ENVELOPE_FRAME_MISMATCH,
+                timestamp_ns=result.command.timestamp_ns,
+                correlation_id=result.correlation_id,
+            )
+
+        source_sequence_id = (
+            intent.source_sequence_id
+            if intent.source_sequence_id is not None
+            else intent.sequence_id
+        )
+        if (
+            envelope.correlation_id != intent.correlation_id
+            or envelope.sequence_id != source_sequence_id
+        ):
+            self._latch(intent)
+            return self._zero(
+                ArbitrationReason.MOTION_ENVELOPE_INTENT_MISMATCH,
+                timestamp_ns=result.command.timestamp_ns,
+                correlation_id=result.correlation_id,
+            )
+
+        checked_now_ns = cast(int, _checked_now_ns(now_ns))
+        envelope_age_ns = checked_now_ns - envelope.timestamp_ns
+        if envelope_age_ns < 0:
+            self._latch(intent)
+            return self._zero(
+                ArbitrationReason.MOTION_ENVELOPE_CLOCK_REGRESSION,
+                timestamp_ns=result.command.timestamp_ns,
+                correlation_id=result.correlation_id,
+            )
+        if envelope_age_ns >= self._config.motion_envelope_stale_threshold_ns:
+            self._latch(intent)
+            return self._zero(
+                ArbitrationReason.MOTION_ENVELOPE_TIMEOUT,
+                timestamp_ns=result.command.timestamp_ns,
+                correlation_id=result.correlation_id,
+            )
+        if result.command.sequence_id <= envelope.ingress_sequence_id:
+            return self._zero(
+                ArbitrationReason.MOTION_ENVELOPE_COMMAND_REQUIRED,
+                timestamp_ns=result.command.timestamp_ns,
+                correlation_id=result.correlation_id,
+            )
+
+        velocity = result.command
+        command = DesiredVelocity(
+            linear_x=_clamp_range(
+                velocity.linear_x,
+                envelope.min_linear_x_mps,
+                envelope.max_linear_x_mps,
+            ),
+            linear_y=_clamp_range(
+                velocity.linear_y,
+                envelope.min_linear_y_mps,
+                envelope.max_linear_y_mps,
+            ),
+            angular_z=_clamp_range(
+                velocity.angular_z,
+                envelope.min_angular_z_radps,
+                envelope.max_angular_z_radps,
+            ),
+            timestamp_ns=velocity.timestamp_ns,
+            frame_id=velocity.frame_id,
+            sequence_id=velocity.sequence_id,
+        )
+        shaped = (
+            command.linear_x,
+            command.linear_y,
+            command.angular_z,
+        ) != (
+            velocity.linear_x,
+            velocity.linear_y,
+            velocity.angular_z,
+        )
+        if not shaped:
+            return result
+
+        self._last_output = command
+        return ArbitrationResult(
+            command=command,
+            mode=ArbitrationMode.CLAMPED,
+            reason=ArbitrationReason.MOTION_ENVELOPE_CLAMPED,
+            policy_version=self._config.policy_version,
+            correlation_id=result.correlation_id,
         )
