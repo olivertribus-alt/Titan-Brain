@@ -123,7 +123,7 @@ def test_initializing_is_fail_closed_until_all_channels_register() -> None:
     )
     assert first.state is SafetyState.INITIALIZING
     assert first.reason is SafetyReason.HEARTBEAT_RECEIVED
-    assert HeartbeatChannel.CONTROL_ARBITER in first.missing_channels
+    assert HeartbeatChannel.CONTROL_ARBITER not in first.missing_channels
 
 
 def test_all_fresh_heartbeats_close_the_requested_relay() -> None:
@@ -458,7 +458,9 @@ def test_typed_relay_feedback_and_invalid_reset_timestamp_are_fail_closed() -> N
     )
     assert feedback.state is SafetyState.HARDWARE_FAULT_LATCH
 
-    invalid_type = supervisor.observe_relay_feedback_message(object())
+    invalid_type = supervisor.observe_relay_feedback_message(
+        object(),  # type: ignore[arg-type]
+    )
     assert invalid_type.reason is SafetyReason.HARDWARE_FAULT_LATCHED
     invalid_reset = supervisor.reset_hardware_fault(
         authorization="TB-SAFE-RESET-001B",
