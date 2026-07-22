@@ -58,3 +58,13 @@ actuator_feedback_monitor_node:
     epsilon_stop_linear: 0.01
     epsilon_stop_angular: 0.02
     timer_period_sec: 0.01
+
+safety_loop_supervisor_node:
+  ros__parameters:
+    policy_version: "TB-SAFE-001C-0.1.0"
+    output_frame_id: "base_link"
+    heartbeat_timeout_sec: 0.20
+    initialization_timeout_sec: 0.20
+    relay_budget_sec: 0.05
+    timer_period_sec: 0.01
+    reset_authorization_token: "TB-SAFE-RESET-001B"

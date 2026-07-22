@@ -52,5 +52,12 @@ def generate_launch_description() -> LaunchDescription:
                 parameters=[config_file],
                 output="screen",
             ),
+            Node(
+                package=_PACKAGE_NAME,
+                executable="safety_loop_supervisor_node",
+                name="safety_loop_supervisor_node",
+                parameters=[config_file],
+                output="screen",
+            ),
         ]
     )
