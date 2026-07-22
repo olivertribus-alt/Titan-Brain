@@ -28,6 +28,7 @@ from rclpy.qos import (
 from titan_brain_msgs.msg import (
     ArbitrationStatus,
     DirectionalSafetyObservation,
+    EvaluatorObservabilityStatus,
     SafetyEvaluationStatus,
     SafetyObservation,
     SafetyStabilityStatus,
@@ -93,6 +94,7 @@ class TestTitanBrainTransport(unittest.TestCase):
         cls.cmd_vel_events: list[tuple[Twist, int]] = []
         cls.arbitration_events: list[tuple[ArbitrationStatus, int]] = []
         cls.evaluation_events: list[SafetyEvaluationStatus] = []
+        cls.observability_events: list[EvaluatorObservabilityStatus] = []
         cls.stability_events: list[SafetyStabilityStatus] = []
 
         cls.observation_publisher = cls.node.create_publisher(
@@ -134,6 +136,12 @@ class TestTitanBrainTransport(unittest.TestCase):
             cls._on_stability,
             _status_qos(),
         )
+        cls.observability_subscription = cls.node.create_subscription(
+            EvaluatorObservabilityStatus,
+            "/safety/evaluator_observability",
+            cls._on_observability,
+            _status_qos(),
+        )
         cls.executor = SingleThreadedExecutor(context=cls.node.context)
         cls.executor.add_node(cls.node)
         cls.executor_thread = threading.Thread(
@@ -167,6 +175,10 @@ class TestTitanBrainTransport(unittest.TestCase):
     @classmethod
     def _on_stability(cls, message: SafetyStabilityStatus) -> None:
         cls.stability_events.append(message)
+
+    @classmethod
+    def _on_observability(cls, message: EvaluatorObservabilityStatus) -> None:
+        cls.observability_events.append(message)
 
     def _wait_for(
         self,
@@ -272,10 +284,15 @@ class TestTitanBrainTransport(unittest.TestCase):
             (message.state, message.reason, message.effective_action)
             for message in self.stability_events[-10:]
         ]
+        observability_states = [
+            (message.outcome, message.latency_status, message.correlation_id)
+            for message in self.observability_events[-10:]
+        ]
         return (
             f"recent evaluations={evaluation_states!r}; "
             f"recent arbitration reasons={arbitration_reasons!r}; "
-            f"recent stability states={stability_states!r}"
+            f"recent stability states={stability_states!r}; "
+            f"recent observability states={observability_states!r}"
         )
 
     def _stream_inputs_until_arbitration(
@@ -321,6 +338,12 @@ class TestTitanBrainTransport(unittest.TestCase):
                     message.observation_accepted
                     and message.action == evaluation_action
                     for message in self.evaluation_events
+                )
+                and any(
+                    message.outcome
+                    in {"normal", "warning", "e_stop"}
+                    and bool(message.correlation_id)
+                    for message in self.observability_events
                 )
                 and any(
                     message.reason == arbitration_reason

@@ -98,6 +98,30 @@ def test_titan_brain_message_contracts_are_explicit() -> None:
         "bool has_release_threshold",
         "float64 release_threshold_m",
     ]
+    assert _message_fields(messages / "EvaluatorObservabilityStatus.msg") == [
+        "std_msgs/Header header",
+        "string schema_version",
+        "string policy_version",
+        "string correlation_id",
+        "string decision_id",
+        "string outcome",
+        "string latency_status",
+        "bool timing_valid",
+        "bool within_budget",
+        "uint64 observation_to_receive_ns",
+        "uint64 receive_to_decision_ns",
+        "uint64 decision_to_publish_ns",
+        "uint64 end_to_end_ns",
+        "string[] exceeded_budgets",
+        "string detail",
+        "uint64 total_count",
+        "uint64 normal_count",
+        "uint64 warning_count",
+        "uint64 e_stop_count",
+        "uint64 rejected_count",
+        "uint64 budget_exceeded_count",
+        "uint64 invalid_timing_count",
+    ]
     assert _message_fields(messages / "ArbitrationStatus.msg") == [
         "uint8 MODE_PASS_THROUGH=0",
         "uint8 MODE_CLAMPED=1",
@@ -126,6 +150,7 @@ def test_message_package_declares_rosidl_and_message_dependencies() -> None:
     assert '"msg/DirectionalSafetyObservation.msg"' in cmake
     assert '"msg/SafetyEvaluationStatus.msg"' in cmake
     assert '"msg/SafetyStabilityStatus.msg"' in cmake
+    assert '"msg/EvaluatorObservabilityStatus.msg"' in cmake
     assert '"msg/ArbitrationStatus.msg"' in cmake
 
 
@@ -189,6 +214,10 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
         "stability_policy_version",
         "clearance_hysteresis_m",
         "recovery_hold_time_s",
+        "observability_policy_version",
+        "receive_to_decision_budget_s",
+        "decision_to_publish_budget_s",
+        "end_to_end_budget_s",
     ):
         assert f"{required_parameter}:" in config_text
     max_observation_age_sec = _float_parameter(
@@ -207,6 +236,9 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert "stability_enabled: true" in config_text
     assert _float_parameter(config_text, "clearance_hysteresis_m") == 0.10
     assert _float_parameter(config_text, "recovery_hold_time_s") == 0.20
+    assert _float_parameter(config_text, "receive_to_decision_budget_s") == 0.05
+    assert _float_parameter(config_text, "decision_to_publish_budget_s") == 0.02
+    assert _float_parameter(config_text, "end_to_end_budget_s") == 0.07
     assert '"config/titan_brain.yaml"' in setup
     assert '"launch/titan_brain.launch.py"' in setup
     launch_text = launch_file.read_text(encoding="utf-8")
@@ -218,6 +250,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert '"/safety/observation"' in e2e_text
     assert '"/safety/directional_observation"' in e2e_text
     assert '"/safety/stability_status"' in e2e_text
+    assert '"/safety/evaluator_observability"' in e2e_text
     assert '"/cmd_vel_nav"' in e2e_text
     assert '"/cmd_vel"' in e2e_text
 

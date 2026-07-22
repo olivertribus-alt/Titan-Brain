@@ -21,10 +21,14 @@ from tf2_ros import Buffer, TransformException, TransformListener
 from titan_brain_msgs.msg import (
     DirectionalSafetyObservation as DirectionalSafetyObservationMsg,
 )
+from titan_brain_msgs.msg import (
+    EvaluatorObservabilityStatus as EvaluatorObservabilityStatusMsg,
+)
 from titan_brain_msgs.msg import SafetyEvaluationStatus as SafetyEvaluationStatusMsg
 from titan_brain_msgs.msg import SafetyObservation as SafetyObservationMsg
 from titan_brain_msgs.msg import SafetyStabilityStatus as SafetyStabilityStatusMsg
 
+from core.adapters.ros_diagnostics import to_ros_evaluator_diagnostic
 from core.adapters.ros_geometry import (
     PlanarTransform,
     Quaternion,
@@ -38,6 +42,13 @@ from core.adapters.ros_observation import (
 )
 from core.braking import BrakingEnvelopeConfig
 from core.incident_store import FileIncidentStore, IncidentStoreError
+from core.observability import (
+    EvaluationOutcome,
+    EvaluationTimestamps,
+    EvaluatorObservability,
+    EvaluatorObservabilityConfig,
+    outcome_from_action,
+)
 from core.safety import SafetyRuleConfig
 from core.stability import EvaluatorState, StabilityConfig, StabilityTransition
 from core.types.incident import Pose2D
@@ -85,6 +96,13 @@ def _required_text_parameter(node: Node, name: str) -> str:
     return value
 
 
+def _text_parameter(node: Node, name: str, default: str) -> str:
+    value = node.declare_parameter(name, default).value
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"ROS parameter {name!r} must be a non-blank string")
+    return value
+
+
 def _required_finite_parameter(
     node: Node,
     name: str,
@@ -101,6 +119,16 @@ def _required_finite_parameter(
         raise ValueError(
             f"ROS parameter {name!r} must be finite and {qualifier}"
         )
+    return checked
+
+
+def _positive_float_parameter(node: Node, name: str, default: float) -> float:
+    value = node.declare_parameter(name, default).value
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"ROS parameter {name!r} must be numeric")
+    checked = float(value)
+    if not math.isfinite(checked) or checked <= 0.0:
+        raise ValueError(f"ROS parameter {name!r} must be finite and positive")
     return checked
 
 
@@ -233,6 +261,38 @@ class SafetyObservationNode(Node):
                 ),
             )
 
+        observability_config = EvaluatorObservabilityConfig(
+            policy_version=_text_parameter(
+                self,
+                "observability_policy_version",
+                "TB-OBS-004-0.1.0",
+            ),
+            receive_to_decision_budget_ns=_seconds_to_ns(
+                _positive_float_parameter(
+                    self,
+                    "receive_to_decision_budget_s",
+                    0.05,
+                ),
+                name="receive_to_decision_budget_s",
+            ),
+            decision_to_publish_budget_ns=_seconds_to_ns(
+                _positive_float_parameter(
+                    self,
+                    "decision_to_publish_budget_s",
+                    0.02,
+                ),
+                name="decision_to_publish_budget_s",
+            ),
+            end_to_end_budget_ns=_seconds_to_ns(
+                _positive_float_parameter(
+                    self,
+                    "end_to_end_budget_s",
+                    0.07,
+                ),
+                name="end_to_end_budget_s",
+            ),
+        )
+
         timer_period_ns = _seconds_to_ns(
             timer_period_sec,
             name="timer_period_sec",
@@ -265,6 +325,7 @@ class SafetyObservationNode(Node):
             safety_rules=safety_rules,
             stability_config=stability_config,
         )
+        self._observability = EvaluatorObservability(observability_config)
 
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
@@ -276,6 +337,11 @@ class SafetyObservationNode(Node):
         self._stability_status_publisher = self.create_publisher(
             SafetyStabilityStatusMsg,
             "/safety/stability_status",
+            status_qos_profile(),
+        )
+        self._observability_publisher = self.create_publisher(
+            EvaluatorObservabilityStatusMsg,
+            "/safety/evaluator_observability",
             status_qos_profile(),
         )
         self._observation_subscription = self.create_subscription(
@@ -302,6 +368,18 @@ class SafetyObservationNode(Node):
     def adapter(self) -> RosObservationAdapter:
         """Expose adapter health for ROS integration tests and diagnostics."""
         return self._adapter
+
+    @property
+    def observability(self) -> EvaluatorObservability:
+        """Expose immutable metric snapshots for integration diagnostics."""
+        return self._observability
+
+    @staticmethod
+    def _message_timestamp_ns(message: ObservationMessage) -> int:
+        return (
+            int(message.header.stamp.sec) * 1_000_000_000
+            + int(message.header.stamp.nanosec)
+        )
 
     def _transform_pose(
         self,
@@ -409,11 +487,14 @@ class SafetyObservationNode(Node):
 
     def _publish_processing_result(
         self,
-        now: Time,
+        received_at: Time,
+        decided_at: Time,
+        observation_ns: int,
         result: RosObservationProcessingResult,
     ) -> None:
-        watchdog = self._adapter.watchdog(now_ns=now.nanoseconds)
-        status = self._base_status(now, watchdog)
+        published_at = self.get_clock().now()
+        watchdog = self._adapter.watchdog(now_ns=published_at.nanoseconds)
+        status = self._base_status(published_at, watchdog)
         status.adapter_status = result.adaptation.status.value
         status.observation_accepted = result.adaptation.accepted
         status.detail = result.adaptation.detail or ""
@@ -423,8 +504,47 @@ class SafetyObservationNode(Node):
             status.action = decision.action
             status.rule = decision.rule
             status.is_incident = result.decision.is_incident
+        self._publish_observability(
+            observation_ns=observation_ns,
+            received_at=received_at,
+            decided_at=decided_at,
+            published_at=published_at,
+            outcome=outcome_from_action(
+                status.action or None,
+                accepted=result.adaptation.accepted,
+            ),
+            decision_id=status.decision_id or None,
+        )
         self._status_publisher.publish(status)
-        self._publish_stability_status(now, result)
+        self._publish_stability_status(published_at, result)
+
+    def _publish_observability(
+        self,
+        *,
+        observation_ns: object,
+        received_at: Time,
+        decided_at: Time,
+        published_at: Time,
+        outcome: EvaluationOutcome,
+        decision_id: str | None = None,
+    ) -> None:
+        report = self._observability.record(
+            EvaluationTimestamps(
+                observation_ns=observation_ns,
+                received_ns=received_at.nanoseconds,
+                decided_ns=decided_at.nanoseconds,
+                published_ns=published_at.nanoseconds,
+            ),
+            outcome=outcome,
+            decision_id=decision_id,
+        )
+        diagnostic = to_ros_evaluator_diagnostic(report)
+        message = EvaluatorObservabilityStatusMsg()
+        message.header.stamp = published_at.to_msg()
+        message.header.frame_id = self._target_frame
+        for field, value in diagnostic.model_dump(mode="python").items():
+            setattr(message, field, value)
+        self._observability_publisher.publish(message)
 
     def _publish_stability_status(
         self,
@@ -460,15 +580,25 @@ class SafetyObservationNode(Node):
 
     def _publish_transport_failure(
         self,
-        now: Time,
+        received_at: Time,
         *,
+        observation_ns: object,
         adapter_status: str,
         detail: str,
     ) -> None:
-        watchdog = self._adapter.watchdog(now_ns=now.nanoseconds)
-        status = self._base_status(now, watchdog)
+        decided_at = self.get_clock().now()
+        published_at = self.get_clock().now()
+        watchdog = self._adapter.watchdog(now_ns=published_at.nanoseconds)
+        status = self._base_status(published_at, watchdog)
         status.adapter_status = adapter_status
         status.detail = detail
+        self._publish_observability(
+            observation_ns=observation_ns,
+            received_at=received_at,
+            decided_at=decided_at,
+            published_at=published_at,
+            outcome=EvaluationOutcome.REJECTED,
+        )
         self._status_publisher.publish(status)
 
     def _on_observation(self, message: SafetyObservationMsg) -> None:
@@ -486,13 +616,15 @@ class SafetyObservationNode(Node):
         *,
         directional_message: DirectionalSafetyObservationMsg | None = None,
     ) -> None:
-        now = self.get_clock().now()
+        received_at = self.get_clock().now()
+        observation_ns = self._message_timestamp_ns(message)
         try:
             pose, frame_id = self._transform_pose(message)
         except TransformException as error:
             self.get_logger().warning(f"TF2 transform rejected: {error}")
             self._publish_transport_failure(
-                now,
+                received_at,
+                observation_ns=observation_ns,
                 adapter_status="tf_unavailable",
                 detail=(
                     f"Unable to transform {message.header.frame_id!r} "
@@ -503,7 +635,8 @@ class SafetyObservationNode(Node):
         except (ValidationError, ValueError) as error:
             self.get_logger().warning(f"Observation geometry rejected: {error}")
             self._publish_transport_failure(
-                now,
+                received_at,
+                observation_ns=observation_ns,
                 adapter_status="invalid_geometry",
                 detail="Observation contains invalid pose or transform geometry.",
             )
@@ -520,12 +653,13 @@ class SafetyObservationNode(Node):
                 payload = self._normalized_payload(message, pose, frame_id)
             result = self._adapter.process(
                 payload,
-                now_ns=now.nanoseconds,
+                now_ns=received_at.nanoseconds,
             )
         except (ValidationError, ValueError) as error:
             self.get_logger().warning(f"Observation payload rejected: {error}")
             self._publish_transport_failure(
-                now,
+                received_at,
+                observation_ns=observation_ns,
                 adapter_status="invalid_observation",
                 detail="Observation contains invalid directional data.",
             )
@@ -533,12 +667,19 @@ class SafetyObservationNode(Node):
         except IncidentStoreError as error:
             self.get_logger().error(f"Incident store failure: {error}")
             self._publish_transport_failure(
-                now,
+                received_at,
+                observation_ns=observation_ns,
                 adapter_status="store_error",
                 detail="Unable to persist safety decision evidence.",
             )
             return
-        self._publish_processing_result(now, result)
+        decided_at = self.get_clock().now()
+        self._publish_processing_result(
+            received_at,
+            decided_at,
+            observation_ns,
+            result,
+        )
 
     def _on_timer(self) -> None:
         now = self.get_clock().now()

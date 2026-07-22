@@ -19,6 +19,10 @@ safety_observation_node:
     stability_policy_version: "TB-STABILITY-0.1.0"
     clearance_hysteresis_m: 0.10
     recovery_hold_time_s: 0.20
+    observability_policy_version: "TB-OBS-004-0.1.0"
+    receive_to_decision_budget_s: 0.05
+    decision_to_publish_budget_s: 0.02
+    end_to_end_budget_s: 0.07
 
 velocity_arbiter_node:
   ros__parameters:

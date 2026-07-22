@@ -11,6 +11,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/DirectionalSafetyObservation.msg"
   "msg/SafetyEvaluationStatus.msg"
   "msg/SafetyStabilityStatus.msg"
+  "msg/EvaluatorObservabilityStatus.msg"
   "msg/ArbitrationStatus.msg"
   DEPENDENCIES geometry_msgs std_msgs
 )
