@@ -27,6 +27,7 @@ from rclpy.qos import (
 )
 from titan_brain_msgs.msg import (
     ArbitrationStatus,
+    CommandPathObservabilityStatus,
     DirectionalSafetyObservation,
     EvaluatorObservabilityStatus,
     SafetyEvaluationStatus,
@@ -98,6 +99,7 @@ class TestTitanBrainTransport(unittest.TestCase):
         cls.observability_events: list[EvaluatorObservabilityStatus] = []
         cls.stability_events: list[SafetyStabilityStatus] = []
         cls.intent_events: list[SafetyIntent] = []
+        cls.command_path_events: list[CommandPathObservabilityStatus] = []
 
         cls.observation_publisher = cls.node.create_publisher(
             DirectionalSafetyObservation,
@@ -150,6 +152,12 @@ class TestTitanBrainTransport(unittest.TestCase):
             cls._on_intent,
             _status_qos(),
         )
+        cls.command_path_subscription = cls.node.create_subscription(
+            CommandPathObservabilityStatus,
+            "/safety/command_path_observability",
+            cls._on_command_path,
+            _status_qos(),
+        )
         cls.executor = SingleThreadedExecutor(context=cls.node.context)
         cls.executor.add_node(cls.node)
         cls.executor_thread = threading.Thread(
@@ -191,6 +199,10 @@ class TestTitanBrainTransport(unittest.TestCase):
     @classmethod
     def _on_intent(cls, message: SafetyIntent) -> None:
         cls.intent_events.append(message)
+
+    @classmethod
+    def _on_command_path(cls, message: CommandPathObservabilityStatus) -> None:
+        cls.command_path_events.append(message)
 
     def _wait_for(
         self,
@@ -304,12 +316,21 @@ class TestTitanBrainTransport(unittest.TestCase):
             (message.state, message.sequence_id, message.correlation_id)
             for message in self.intent_events[-10:]
         ]
+        command_path_states = [
+            (
+                message.arbitration_reason,
+                message.latency_status,
+                message.correlation_id,
+            )
+            for message in self.command_path_events[-10:]
+        ]
         return (
             f"recent evaluations={evaluation_states!r}; "
             f"recent arbitration reasons={arbitration_reasons!r}; "
             f"recent stability states={stability_states!r}; "
             f"recent observability states={observability_states!r}; "
-            f"recent intents={intent_states!r}"
+            f"recent intents={intent_states!r}; "
+            f"recent command paths={command_path_states!r}"
         )
 
     def _stream_inputs_until_arbitration(
@@ -356,23 +377,7 @@ class TestTitanBrainTransport(unittest.TestCase):
                     and message.action == evaluation_action
                     for message in self.evaluation_events
                 )
-                and any(
-                    message.outcome
-                    in {"normal", "warning", "e_stop"}
-                    and bool(message.correlation_id)
-                    for message in self.observability_events
-                )
-                and any(
-                    message.reason == arbitration_reason
-                    and bool(message.correlation_id)
-                    and any(
-                        intent.correlation_id == message.correlation_id
-                        and intent.sequence_id
-                        == message.safety_intent_sequence_id
-                        for intent in self.intent_events
-                    )
-                    for message, _received_at_ns in self.arbitration_events
-                )
+                and self._has_correlated_command_path(arbitration_reason)
             ),
             on_cycle=keep_inputs_fresh,
             failure_message=lambda: (
@@ -383,6 +388,42 @@ class TestTitanBrainTransport(unittest.TestCase):
         )
         assert first_observation_at_ns is not None
         return first_observation_at_ns
+
+    def _has_correlated_command_path(self, arbitration_reason: str) -> bool:
+        """Require one identity across evaluator, intent, arbiter, and telemetry."""
+        for path in self.command_path_events:
+            if (
+                path.arbitration_reason != arbitration_reason
+                or not path.correlation_id
+                or not path.timing_valid
+                or path.observation_to_command_ns
+                != (
+                    path.command_published_timestamp_ns
+                    - path.observation_timestamp_ns
+                )
+            ):
+                continue
+            if not any(
+                evaluator.correlation_id == path.correlation_id
+                for evaluator in self.observability_events
+            ):
+                continue
+            if not any(
+                intent.correlation_id == path.correlation_id
+                and intent.sequence_id == path.safety_intent_sequence_id
+                for intent in self.intent_events
+            ):
+                continue
+            if any(
+                status.correlation_id == path.correlation_id
+                and status.reason == path.arbitration_reason
+                and status.command_sequence_id == path.command_sequence_id
+                and status.safety_intent_sequence_id
+                == path.safety_intent_sequence_id
+                for status, _received_at_ns in self.arbitration_events
+            ):
+                return True
+        return False
 
     def _wait_for_arbitration_reason(
         self,
@@ -408,6 +449,7 @@ class TestTitanBrainTransport(unittest.TestCase):
         self.evaluation_events.clear()
         self.stability_events.clear()
         self.intent_events.clear()
+        self.command_path_events.clear()
 
     def test_complete_safety_transport_pipeline(self) -> None:
         """Verify startup, motion, stop, and staleness over live DDS topics."""
@@ -422,6 +464,10 @@ class TestTitanBrainTransport(unittest.TestCase):
                 and self.node.count_publishers("/safety/evaluation_status") == 1
                 and self.node.count_publishers("/safety/stability_status") == 1
                 and self.node.count_publishers("/safety/intent") == 1
+                and self.node.count_publishers(
+                    "/safety/command_path_observability"
+                )
+                == 1
             ),
             timeout_sec=_DISCOVERY_TIMEOUT_SEC,
             failure_message="Expected Titan Brain ROS graph was not discovered.",
@@ -536,6 +582,8 @@ class TestTitanBrainTransport(unittest.TestCase):
                 ArbitrationStatus.MODE_FORCED_ZERO,
             )
             self.assertEqual(stop_status.commanded_twist.linear.x, 0.0)
+            self.assertTrue(stop_status.arbitration_timing_valid)
+            self.assertTrue(stop_status.correlation_id.startswith("eval_"))
             self.assertLess(
                 measured_latency_ns,
                 _CI_STOP_DEADLINE_NS,
@@ -549,6 +597,19 @@ class TestTitanBrainTransport(unittest.TestCase):
                     for message, received_ns in self.cmd_vel_events
                 ),
                 failure_message="Emergency zero was not observed on /cmd_vel.",
+            )
+            self._wait_for(
+                lambda: any(
+                    message.correlation_id == stop_status.correlation_id
+                    and message.arbitration_reason == "e_stop_active"
+                    and message.arbitration_mode
+                    == ArbitrationStatus.MODE_FORCED_ZERO
+                    and message.timing_valid
+                    for message in self.command_path_events
+                ),
+                failure_message=(
+                    "Emergency-stop command path was not audit-correlated."
+                ),
             )
 
         with self.subTest("recovery_holds_stop_until_stable_window_completes"):
@@ -626,6 +687,14 @@ class TestTitanBrainTransport(unittest.TestCase):
                 if message.reason == "command_timeout"
             )
             self.assertEqual(stale_status.commanded_twist.linear.x, 0.0)
+            self._wait_for(
+                lambda: any(
+                    message.correlation_id == stale_status.correlation_id
+                    and message.arbitration_reason == "command_timeout"
+                    for message in self.command_path_events
+                ),
+                failure_message="Command timeout lost its audit correlation.",
+            )
 
         with self.subTest("observation_watchdog_times_out"):
             self._clear_events()

@@ -25,6 +25,7 @@ def _parameters() -> list[Parameter]:
         Parameter("command_stale_threshold_sec", value=0.1),
         Parameter("safety_stale_threshold_sec", value=0.25),
         Parameter("timer_period_sec", value=0.02),
+        Parameter("arbitration_latency_budget_sec", value=0.03),
         Parameter("max_abs_linear_x", value=0.8),
         Parameter("max_abs_linear_y", value=0.2),
         Parameter("max_abs_angular_z", value=1.5),
@@ -105,6 +106,10 @@ def test_startup_is_forced_zero_and_node_owns_control_plane_topics() -> None:
         assert status is not None
         assert status.mode == ArbitrationStatus.MODE_FORCED_ZERO
         assert status.is_safe is False
+        assert status.arbitration_timing_valid is False
+        assert status.arbitration_latency_status == "invalid_timing"
+        assert status.arbitration_latency_ns == 0
+        assert status.arbitration_latency_budget_ns == 30_000_000
         assert status.commanded_twist.linear.x == 0.0
         assert node.count_publishers("/cmd_vel") == 1
         assert node.count_publishers("/safety/arbitration_status") == 1
@@ -139,6 +144,14 @@ def test_fresh_normal_intent_and_newer_command_are_passed_through() -> None:
         assert status.is_safe is True
         assert status.command_sequence_id > 0
         assert status.safety_intent_sequence_id == 1
+        assert status.arbitration_timing_valid is True
+        assert status.arbitration_within_budget is True
+        assert status.arbitration_latency_status == "within_budget"
+        assert (
+            status.command_published_timestamp_ns
+            - status.intent_received_timestamp_ns
+            == status.arbitration_latency_ns
+        )
         assert status.max_abs_linear_x == 0.8
         assert status.warning_max_abs_linear_x == 0.3
         assert status.header.frame_id == "base_link"

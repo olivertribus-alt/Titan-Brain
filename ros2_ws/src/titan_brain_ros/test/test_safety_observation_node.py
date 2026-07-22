@@ -53,7 +53,7 @@ def test_node_accepts_normalized_observation_in_target_frame() -> None:
         assert node.last_safety_intent is not None
         assert node.last_safety_intent.state == SafetyIntent.STATE_NORMAL
         assert node.last_safety_intent.sequence_id == 1
-        assert node.last_safety_intent.correlation_id
+        assert node.last_safety_intent.correlation_id.startswith("eval_")
         assert node.count_subscribers("/safety/observation") == 1
         assert node.count_subscribers("/safety/directional_observation") == 1
     finally:

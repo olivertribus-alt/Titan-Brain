@@ -1,0 +1,25 @@
+# Correlated observation-to-command timing emitted by the observability plane.
+std_msgs/Header header
+string schema_version
+string policy_version
+string correlation_id
+string decision_id
+string outcome
+string arbitration_reason
+uint8 arbitration_mode
+uint64 command_sequence_id
+uint64 safety_intent_sequence_id
+string latency_status
+bool timing_valid
+bool within_budget
+uint64 observation_timestamp_ns
+uint64 evaluator_published_timestamp_ns
+uint64 intent_received_timestamp_ns
+uint64 command_published_timestamp_ns
+uint64 evaluator_end_to_end_ns
+uint64 arbitration_latency_ns
+uint64 observation_to_command_ns
+uint64 arbitration_latency_budget_ns
+uint64 observation_to_command_budget_ns
+string[] exceeded_budgets
+string detail

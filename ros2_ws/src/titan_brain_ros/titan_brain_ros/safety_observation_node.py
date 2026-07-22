@@ -45,6 +45,7 @@ from core.adapters.ros_observation import (
 from core.braking import BrakingEnvelopeConfig
 from core.incident_store import FileIncidentStore, IncidentStoreError
 from core.observability import (
+    EvaluationObservabilityReport,
     EvaluationOutcome,
     EvaluationTimestamps,
     EvaluatorObservability,
@@ -543,16 +544,7 @@ class SafetyObservationNode(Node):
             status.action = decision.action
             status.rule = decision.rule
             status.is_incident = result.decision.is_incident
-        correlation_id = status.decision_id or (
-            f"missing_decision_id_{published_at.nanoseconds}"
-        )
-        self._publish_safety_intent(
-            published_at,
-            state=_safety_intent_state(result),
-            correlation_id=correlation_id,
-        )
-        self._watchdog_stop_status = None
-        self._publish_observability(
+        report = self._record_observability(
             observation_ns=observation_ns,
             received_at=received_at,
             decided_at=decided_at,
@@ -563,6 +555,13 @@ class SafetyObservationNode(Node):
             ),
             decision_id=status.decision_id or None,
         )
+        self._publish_safety_intent(
+            published_at,
+            state=_safety_intent_state(result),
+            correlation_id=report.correlation_id,
+        )
+        self._watchdog_stop_status = None
+        self._publish_observability(report, published_at=published_at)
         self._status_publisher.publish(status)
         self._publish_stability_status(published_at, result)
 
@@ -582,7 +581,7 @@ class SafetyObservationNode(Node):
         self._safety_intent_publisher.publish(message)
         self._last_safety_intent = message
 
-    def _publish_observability(
+    def _record_observability(
         self,
         *,
         observation_ns: object,
@@ -591,8 +590,8 @@ class SafetyObservationNode(Node):
         published_at: Time,
         outcome: EvaluationOutcome,
         decision_id: str | None = None,
-    ) -> None:
-        report = self._observability.record(
+    ) -> EvaluationObservabilityReport:
+        return self._observability.record(
             EvaluationTimestamps(
                 observation_ns=observation_ns,
                 received_ns=received_at.nanoseconds,
@@ -602,6 +601,13 @@ class SafetyObservationNode(Node):
             outcome=outcome,
             decision_id=decision_id,
         )
+
+    def _publish_observability(
+        self,
+        report: EvaluationObservabilityReport,
+        *,
+        published_at: Time,
+    ) -> None:
         diagnostic = to_ros_evaluator_diagnostic(report)
         message = EvaluatorObservabilityStatusMsg()
         message.header.stamp = published_at.to_msg()
@@ -656,7 +662,7 @@ class SafetyObservationNode(Node):
         status = self._base_status(published_at, watchdog)
         status.adapter_status = adapter_status
         status.detail = detail
-        self._publish_observability(
+        report = self._record_observability(
             observation_ns=observation_ns,
             received_at=received_at,
             decided_at=decided_at,
@@ -666,11 +672,10 @@ class SafetyObservationNode(Node):
         self._publish_safety_intent(
             published_at,
             state=SafetyIntentMsg.STATE_E_STOP,
-            correlation_id=(
-                f"transport_{adapter_status}_{published_at.nanoseconds}"
-            ),
+            correlation_id=report.correlation_id,
         )
         self._watchdog_stop_status = None
+        self._publish_observability(report, published_at=published_at)
         self._status_publisher.publish(status)
 
     def _on_observation(self, message: SafetyObservationMsg) -> None:

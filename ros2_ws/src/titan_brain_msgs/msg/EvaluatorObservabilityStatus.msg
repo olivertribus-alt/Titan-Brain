@@ -8,6 +8,10 @@ string outcome
 string latency_status
 bool timing_valid
 bool within_budget
+uint64 observation_timestamp_ns
+uint64 received_timestamp_ns
+uint64 decision_timestamp_ns
+uint64 published_timestamp_ns
 uint64 observation_to_receive_ns
 uint64 receive_to_decision_ns
 uint64 decision_to_publish_ns
