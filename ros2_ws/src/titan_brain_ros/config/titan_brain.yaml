@@ -68,3 +68,18 @@ safety_loop_supervisor_node:
     relay_budget_sec: 0.05
     timer_period_sec: 0.01
     reset_authorization_token: "TB-SAFE-RESET-001B"
+
+command_governor_node:
+  ros__parameters:
+    timer_period_sec: 0.02
+    cmd_timeout_sec: 0.20
+    safety_timeout_sec: 0.25
+    stale_command_emergency_stop: true
+    max_linear_velocity_mps: 1.0
+    max_angular_velocity_radps: 1.0
+    max_linear_acceleration_mps2: 1.0
+    max_linear_deceleration_mps2: 2.0
+    max_angular_acceleration_radps2: 1.0
+    max_angular_deceleration_radps2: 2.0
+    max_linear_jerk_mps3: 5.0
+    max_angular_jerk_radps3: 5.0

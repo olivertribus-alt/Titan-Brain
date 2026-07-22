@@ -13,7 +13,13 @@ setup(
         ),
         (f"share/{PACKAGE_NAME}", ["package.xml"]),
         (f"share/{PACKAGE_NAME}/config", ["config/titan_brain.yaml"]),
-        (f"share/{PACKAGE_NAME}/launch", ["launch/titan_brain.launch.py"]),
+        (
+            f"share/{PACKAGE_NAME}/launch",
+            [
+                "launch/titan_brain.launch.py",
+                "launch/command_governor.launch.py",
+            ],
+        ),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -33,6 +39,8 @@ setup(
             "titan_brain_ros.actuator_feedback_monitor_node:main",
             "safety_loop_supervisor_node = "
             "titan_brain_ros.safety_loop_supervisor_node:main",
+            "command_governor_node = "
+            "titan_brain_ros.command_governor_node:main",
         ],
     },
 )

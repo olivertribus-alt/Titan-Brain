@@ -327,6 +327,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert "titan_brain_ros.command_path_observability_node:main" in setup
     assert "titan_brain_ros.actuator_feedback_monitor_node:main" in setup
     assert "titan_brain_ros.safety_loop_supervisor_node:main" in setup
+    assert "titan_brain_ros.command_governor_node:main" in setup
     assert (package / "resource" / "titan_brain_ros").is_file()
     assert (
         package / "titan_brain_ros" / "safety_observation_node.py"
@@ -343,15 +344,23 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert (
         package / "titan_brain_ros" / "safety_loop_supervisor_node.py"
     ).is_file()
+    assert (
+        package / "titan_brain_ros" / "command_governor_node.py"
+    ).is_file()
     shared_config = package / "config" / "titan_brain.yaml"
     launch_file = package / "launch" / "titan_brain.launch.py"
     e2e_test = package / "test" / "test_e2e_transport.py"
     assert shared_config.is_file()
     assert launch_file.is_file()
+    command_launch_file = package / "launch" / "command_governor.launch.py"
+    assert command_launch_file.is_file()
     assert e2e_test.is_file()
     launch_text = launch_file.read_text(encoding="utf-8")
     assert 'executable="actuator_feedback_monitor_node"' in launch_text
     assert 'executable="safety_loop_supervisor_node"' in launch_text
+    assert 'executable="command_governor_node"' in launch_text
+    command_launch_text = command_launch_file.read_text(encoding="utf-8")
+    assert 'executable="command_governor_node"' in command_launch_text
     config_text = shared_config.read_text(encoding="utf-8")
     for required_parameter in (
         "target_frame",
@@ -398,6 +407,17 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
         "initialization_timeout_sec",
         "relay_budget_sec",
         "reset_authorization_token",
+        "cmd_timeout_sec",
+        "safety_timeout_sec",
+        "stale_command_emergency_stop",
+        "max_linear_velocity_mps",
+        "max_angular_velocity_radps",
+        "max_linear_acceleration_mps2",
+        "max_linear_deceleration_mps2",
+        "max_angular_acceleration_radps2",
+        "max_angular_deceleration_radps2",
+        "max_linear_jerk_mps3",
+        "max_angular_jerk_radps3",
     ):
         assert f"{required_parameter}:" in config_text
     max_observation_age_sec = _float_parameter(
