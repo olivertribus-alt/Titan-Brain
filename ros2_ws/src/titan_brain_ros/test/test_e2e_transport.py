@@ -30,6 +30,7 @@ from titan_brain_msgs.msg import (
     DirectionalSafetyObservation,
     EvaluatorObservabilityStatus,
     SafetyEvaluationStatus,
+    SafetyIntent,
     SafetyObservation,
     SafetyStabilityStatus,
 )
@@ -96,6 +97,7 @@ class TestTitanBrainTransport(unittest.TestCase):
         cls.evaluation_events: list[SafetyEvaluationStatus] = []
         cls.observability_events: list[EvaluatorObservabilityStatus] = []
         cls.stability_events: list[SafetyStabilityStatus] = []
+        cls.intent_events: list[SafetyIntent] = []
 
         cls.observation_publisher = cls.node.create_publisher(
             DirectionalSafetyObservation,
@@ -109,7 +111,7 @@ class TestTitanBrainTransport(unittest.TestCase):
         )
         cls.navigation_publisher = cls.node.create_publisher(
             Twist,
-            "/cmd_vel_nav",
+            "/cmd_vel_raw",
             _command_qos(),
         )
         cls.cmd_vel_subscription = cls.node.create_subscription(
@@ -140,6 +142,12 @@ class TestTitanBrainTransport(unittest.TestCase):
             EvaluatorObservabilityStatus,
             "/safety/evaluator_observability",
             cls._on_observability,
+            _status_qos(),
+        )
+        cls.intent_subscription = cls.node.create_subscription(
+            SafetyIntent,
+            "/safety/intent",
+            cls._on_intent,
             _status_qos(),
         )
         cls.executor = SingleThreadedExecutor(context=cls.node.context)
@@ -179,6 +187,10 @@ class TestTitanBrainTransport(unittest.TestCase):
     @classmethod
     def _on_observability(cls, message: EvaluatorObservabilityStatus) -> None:
         cls.observability_events.append(message)
+
+    @classmethod
+    def _on_intent(cls, message: SafetyIntent) -> None:
+        cls.intent_events.append(message)
 
     def _wait_for(
         self,
@@ -288,11 +300,16 @@ class TestTitanBrainTransport(unittest.TestCase):
             (message.outcome, message.latency_status, message.correlation_id)
             for message in self.observability_events[-10:]
         ]
+        intent_states = [
+            (message.state, message.sequence_id, message.correlation_id)
+            for message in self.intent_events[-10:]
+        ]
         return (
             f"recent evaluations={evaluation_states!r}; "
             f"recent arbitration reasons={arbitration_reasons!r}; "
             f"recent stability states={stability_states!r}; "
-            f"recent observability states={observability_states!r}"
+            f"recent observability states={observability_states!r}; "
+            f"recent intents={intent_states!r}"
         )
 
     def _stream_inputs_until_arbitration(
@@ -347,6 +364,13 @@ class TestTitanBrainTransport(unittest.TestCase):
                 )
                 and any(
                     message.reason == arbitration_reason
+                    and bool(message.correlation_id)
+                    and any(
+                        intent.correlation_id == message.correlation_id
+                        and intent.sequence_id
+                        == message.safety_intent_sequence_id
+                        for intent in self.intent_events
+                    )
                     for message, _received_at_ns in self.arbitration_events
                 )
             ),
@@ -383,6 +407,7 @@ class TestTitanBrainTransport(unittest.TestCase):
         self.arbitration_events.clear()
         self.evaluation_events.clear()
         self.stability_events.clear()
+        self.intent_events.clear()
 
     def test_complete_safety_transport_pipeline(self) -> None:
         """Verify startup, motion, stop, and staleness over live DDS topics."""
@@ -396,6 +421,7 @@ class TestTitanBrainTransport(unittest.TestCase):
                 and self.node.count_publishers("/safety/arbitration_status") == 1
                 and self.node.count_publishers("/safety/evaluation_status") == 1
                 and self.node.count_publishers("/safety/stability_status") == 1
+                and self.node.count_publishers("/safety/intent") == 1
             ),
             timeout_sec=_DISCOVERY_TIMEOUT_SEC,
             failure_message="Expected Titan Brain ROS graph was not discovered.",
@@ -403,11 +429,11 @@ class TestTitanBrainTransport(unittest.TestCase):
 
         with self.subTest("cold_start_forces_zero"):
             self._clear_events()
-            self._wait_for_arbitration_reason("safety_state_missing")
+            self._wait_for_arbitration_reason("safety_intent_missing")
             startup_status = next(
                 message
                 for message, _received_at_ns in self.arbitration_events
-                if message.reason == "safety_state_missing"
+                if message.reason == "safety_intent_missing"
             )
             self.assertEqual(
                 startup_status.mode,
@@ -445,7 +471,7 @@ class TestTitanBrainTransport(unittest.TestCase):
                 clearance_m=0.8,
                 linear_x_mps=0.8,
                 evaluation_action="emergency_stop",
-                arbitration_reason="emergency_stop",
+                arbitration_reason="e_stop_active",
             )
 
         with self.subTest("legacy_input_fails_closed_in_dynamic_mode"):
@@ -470,7 +496,7 @@ class TestTitanBrainTransport(unittest.TestCase):
                         for message in self.evaluation_events
                     )
                     and any(
-                        message.reason == "protective_stop"
+                        message.reason == "warning_shaped"
                         for message, _received_at_ns in self.arbitration_events
                     )
                 ),
@@ -497,12 +523,12 @@ class TestTitanBrainTransport(unittest.TestCase):
             published_at_ns = self._stream_inputs_until_arbitration(
                 clearance_m=0.2,
                 evaluation_action="emergency_stop",
-                arbitration_reason="emergency_stop",
+                arbitration_reason="e_stop_active",
             )
             stop_status, received_at_ns = next(
                 event
                 for event in self.arbitration_events
-                if event[0].reason == "emergency_stop"
+                if event[0].reason == "e_stop_active"
             )
             measured_latency_ns = received_at_ns - published_at_ns
             self.assertEqual(
@@ -549,7 +575,7 @@ class TestTitanBrainTransport(unittest.TestCase):
                         for message in self.stability_events
                     )
                     and any(
-                        message.reason == "emergency_stop"
+                        message.reason == "recovery_holding"
                         for message, _received_at_ns in self.arbitration_events
                     )
                 ),
@@ -591,13 +617,13 @@ class TestTitanBrainTransport(unittest.TestCase):
                 lambda: self._publish_observation(clearance_m=1.2)
             )
             self._wait_for_arbitration_reason(
-                "command_stale",
+                "command_timeout",
                 on_cycle=observation_stream,
             )
             stale_status = next(
                 message
                 for message, _received_at_ns in self.arbitration_events
-                if message.reason == "command_stale"
+                if message.reason == "command_timeout"
             )
             self.assertEqual(stale_status.commanded_twist.linear.x, 0.0)
 
@@ -614,13 +640,13 @@ class TestTitanBrainTransport(unittest.TestCase):
                 self._publish_navigation_command
             )
             self._wait_for_arbitration_reason(
-                "watchdog_timed_out",
+                "e_stop_active",
                 on_cycle=navigation_stream,
             )
             timeout_status = next(
                 message
                 for message, _received_at_ns in self.arbitration_events
-                if message.reason == "watchdog_timed_out"
+                if message.reason == "e_stop_active"
             )
             self.assertEqual(
                 timeout_status.mode,

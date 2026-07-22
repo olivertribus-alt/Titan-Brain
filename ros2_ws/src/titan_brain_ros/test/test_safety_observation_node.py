@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import rclpy
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, ReliabilityPolicy
-from titan_brain_msgs.msg import SafetyObservation
+from titan_brain_msgs.msg import SafetyIntent, SafetyObservation
 from titan_brain_ros.safety_observation_node import (
     SafetyObservationNode,
     sensor_data_qos_profile,
@@ -47,8 +47,13 @@ def test_node_accepts_normalized_observation_in_target_frame() -> None:
         assert node.count_publishers("/safety/evaluation_status") == 1
         assert node.count_publishers("/safety/stability_status") == 1
         assert node.count_publishers("/safety/evaluator_observability") == 1
+        assert node.count_publishers("/safety/intent") == 1
         assert node.observability.counters.total == 1
         assert node.observability.counters.normal == 1
+        assert node.last_safety_intent is not None
+        assert node.last_safety_intent.state == SafetyIntent.STATE_NORMAL
+        assert node.last_safety_intent.sequence_id == 1
+        assert node.last_safety_intent.correlation_id
         assert node.count_subscribers("/safety/observation") == 1
         assert node.count_subscribers("/safety/directional_observation") == 1
     finally:

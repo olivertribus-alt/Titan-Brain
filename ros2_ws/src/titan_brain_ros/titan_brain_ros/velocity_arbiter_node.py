@@ -15,20 +15,19 @@ from rclpy.qos import (
     ReliabilityPolicy,
 )
 from titan_brain_msgs.msg import ArbitrationStatus as ArbitrationStatusMsg
-from titan_brain_msgs.msg import SafetyEvaluationStatus as SafetyEvaluationStatusMsg
+from titan_brain_msgs.msg import SafetyIntent as SafetyIntentMsg
 
 from core.arbitrator import (
     ArbitrationMode,
     ArbitrationResult,
-    EvaluationAction,
-    SafetyInput,
-    VelocityArbiter,
+    DynamicSafetyCommandArbiter,
+    IntentInput,
+    SafetyIntentState,
     VelocityArbiterConfig,
     VelocityInput,
 )
 
 _NANOSECONDS_PER_SECOND = 1_000_000_000
-_SAFETY_STATUS_SCHEMA_VERSION = "0.1"
 
 
 def command_qos_profile() -> QoSProfile:
@@ -42,7 +41,7 @@ def command_qos_profile() -> QoSProfile:
 
 
 def status_qos_profile() -> QoSProfile:
-    """Return the reliable, non-latched safety-status QoS contract."""
+    """Return the reliable, non-latched safety control/status QoS contract."""
     return QoSProfile(
         history=HistoryPolicy.KEEP_LAST,
         depth=10,
@@ -84,10 +83,10 @@ def _seconds_to_ns(value: float, *, name: str) -> int:
     return nanoseconds
 
 
-def _message_stamp_ns(message: SafetyEvaluationStatusMsg) -> int:
+def _intent_timestamp_ns(message: SafetyIntentMsg) -> int:
     return (
-        int(message.header.stamp.sec) * _NANOSECONDS_PER_SECOND
-        + int(message.header.stamp.nanosec)
+        int(message.timestamp.sec) * _NANOSECONDS_PER_SECOND
+        + int(message.timestamp.nanosec)
     )
 
 
@@ -107,8 +106,19 @@ def _status_mode(result: ArbitrationResult) -> int:
     }[result.mode]
 
 
+def _intent_state(value: int) -> SafetyIntentState | None:
+    return {
+        SafetyIntentMsg.STATE_NORMAL: SafetyIntentState.NORMAL,
+        SafetyIntentMsg.STATE_WARNING: SafetyIntentState.WARNING,
+        SafetyIntentMsg.STATE_E_STOP: SafetyIntentState.E_STOP,
+        SafetyIntentMsg.STATE_RECOVERY_HOLDING: (
+            SafetyIntentState.RECOVERY_HOLDING
+        ),
+    }.get(value)
+
+
 class VelocityArbiterNode(Node):
-    """Apply the pure arbiter and exclusively publish its checked command."""
+    """Apply the pure stateful arbiter and own the final actuator topic."""
 
     def __init__(
         self,
@@ -163,14 +173,32 @@ class VelocityArbiterNode(Node):
                 "max_abs_angular_z",
                 allow_zero=True,
             ),
+            warning_max_abs_linear_x=_required_finite_parameter(
+                self,
+                "warning_max_abs_linear_x",
+                allow_zero=True,
+            ),
+            warning_max_abs_linear_y=_required_finite_parameter(
+                self,
+                "warning_max_abs_linear_y",
+                allow_zero=True,
+            ),
+            warning_max_abs_angular_z=_required_finite_parameter(
+                self,
+                "warning_max_abs_angular_z",
+                allow_zero=True,
+            ),
         )
 
-        self._arbiter = VelocityArbiter(config)
+        self._arbiter = DynamicSafetyCommandArbiter(config)
         self._desired_velocity: VelocityInput = None
-        self._safety_state: SafetyInput = None
-        self._last_evaluation_action: str | None = None
-        self._last_evaluation_timestamp_ns: int | None = None
-        self._transport_fault_latched = False
+        self._safety_intent: IntentInput = None
+        self._ingress_sequence_id = 0
+        self._command_sequence_id = 0
+        self._source_intent_sequence_id = 0
+        self._last_source_intent_sequence_id: int | None = None
+        self._last_source_intent_payload: tuple[int, int, str] | None = None
+        self._audit_correlation_id = ""
         self._last_result: ArbitrationResult | None = None
         self._last_status: ArbitrationStatusMsg | None = None
 
@@ -186,14 +214,14 @@ class VelocityArbiterNode(Node):
         )
         self._command_subscription = self.create_subscription(
             Twist,
-            "/cmd_vel_nav",
+            "/cmd_vel_raw",
             self._on_desired_velocity,
             command_qos_profile(),
         )
         self._safety_subscription = self.create_subscription(
-            SafetyEvaluationStatusMsg,
-            "/safety/evaluation_status",
-            self._on_safety_status,
+            SafetyIntentMsg,
+            "/safety/intent",
+            self._on_safety_intent,
             status_qos_profile(),
         )
         self._arbitration_timer = self.create_timer(
@@ -201,8 +229,7 @@ class VelocityArbiterNode(Node):
             self._on_timer,
         )
 
-        # Publish a fail-closed command during startup instead of waiting for
-        # the first timer tick or either input stream.
+        # Do not wait for DDS discovery or the first timer tick to stop motion.
         self._on_timer()
         self.get_logger().info(
             "VelocityArbiterNode initialized as /cmd_vel authority "
@@ -210,8 +237,8 @@ class VelocityArbiterNode(Node):
         )
 
     @property
-    def arbiter(self) -> VelocityArbiter:
-        """Expose the immutable policy for runtime diagnostics and tests."""
+    def arbiter(self) -> DynamicSafetyCommandArbiter:
+        """Expose the active stateful policy for runtime diagnostics/tests."""
         return self._arbiter
 
     @property
@@ -224,63 +251,100 @@ class VelocityArbiterNode(Node):
         """Return the diagnostic message paired with the latest command."""
         return self._last_status
 
+    def _next_ingress_sequence_id(self) -> int:
+        self._ingress_sequence_id += 1
+        return self._ingress_sequence_id
+
     def _on_desired_velocity(self, message: Twist) -> None:
         received_at_ns = self.get_clock().now().nanoseconds
+        sequence_id = self._next_ingress_sequence_id()
+        self._command_sequence_id = sequence_id
         self._desired_velocity = {
             "linear_x": float(message.linear.x),
             "linear_y": float(message.linear.y),
             "angular_z": float(message.angular.z),
             "timestamp_ns": received_at_ns,
             "frame_id": self._arbiter.config.output_frame_id,
+            "sequence_id": sequence_id,
         }
 
-    def _on_safety_status(self, message: SafetyEvaluationStatusMsg) -> None:
-        if message.schema_version != _SAFETY_STATUS_SCHEMA_VERSION:
-            self._transport_fault_latched = True
-            self._safety_state = {"unsupported_schema": message.schema_version}
-            return
-        if message.observation_accepted:
-            self._last_evaluation_action = message.action
-            self._last_evaluation_timestamp_ns = _message_stamp_ns(message)
-            self._transport_fault_latched = False
-        elif message.adapter_status != "watchdog":
-            # A TF, validation, or persistence failure cannot be cleared by a
-            # later heartbeat; only a newly accepted evaluation can clear it.
-            self._transport_fault_latched = True
-            self._safety_state = {"transport_fault": True}
+    def _on_safety_intent(self, message: SafetyIntentMsg) -> None:
+        source_sequence_id = int(message.sequence_id)
+        timestamp_ns = _intent_timestamp_ns(message)
+        correlation_id = str(message.correlation_id)
+        payload = (int(message.state), timestamp_ns, correlation_id)
+        self._source_intent_sequence_id = source_sequence_id
+        self._audit_correlation_id = correlation_id
+
+        if source_sequence_id <= 0:
+            self._safety_intent = {"invalid_source_sequence_id": source_sequence_id}
             return
 
-        action = self._last_evaluation_action
-        timestamp_ns = self._last_evaluation_timestamp_ns
-        if self._transport_fault_latched:
-            self._safety_state = {"transport_fault": True}
-            return
-        if action is None or timestamp_ns is None:
-            self._safety_state = None
-            return
-
-        self._safety_state = {
-            "is_safe": (
-                bool(message.watchdog_healthy)
-                and action
-                in {
-                    EvaluationAction.PROCEED.value,
-                    EvaluationAction.CLAMP.value,
+        last_sequence_id = self._last_source_intent_sequence_id
+        if last_sequence_id is not None:
+            if source_sequence_id < last_sequence_id:
+                self._safety_intent = {
+                    "source_sequence_regression": source_sequence_id
                 }
-            ),
-            "watchdog_state": message.watchdog_status,
-            "eval_action": action,
+                return
+            if source_sequence_id == last_sequence_id:
+                if payload != self._last_source_intent_payload:
+                    self._safety_intent = {
+                        "source_sequence_payload_mutation": source_sequence_id
+                    }
+                # An identical replay is deliberately not freshened.
+                return
+
+        self._last_source_intent_sequence_id = source_sequence_id
+        self._last_source_intent_payload = payload
+        state = _intent_state(int(message.state))
+        if state is None or not correlation_id.strip():
+            self._safety_intent = {"invalid_safety_intent": payload}
+            return
+
+        self._safety_intent = {
+            "state": state,
             "timestamp_ns": timestamp_ns,
+            "correlation_id": correlation_id,
+            # Commands and intents deliberately share this local ordering
+            # domain; publisher sequence IDs are validated separately above.
+            "sequence_id": self._next_ingress_sequence_id(),
         }
+
+    def _warning_limit(self, warning: float | None, nominal: float) -> float:
+        return nominal if warning is None else warning
 
     def _publish_result(self, result: ArbitrationResult, *, now_ns: int) -> None:
         command = _twist_from_result(result)
+        config = self._arbiter.config
         status = ArbitrationStatusMsg()
         status.header.stamp.sec = now_ns // _NANOSECONDS_PER_SECOND
         status.header.stamp.nanosec = now_ns % _NANOSECONDS_PER_SECOND
-        status.header.frame_id = self._arbiter.config.output_frame_id
+        status.header.frame_id = config.output_frame_id
         status.mode = _status_mode(result)
         status.reason = result.reason.value
+        status.policy_version = result.policy_version
+        status.correlation_id = (
+            result.correlation_id or self._audit_correlation_id
+        )
+        status.is_safe = result.mode is not ArbitrationMode.FORCED_ZERO
+        status.command_sequence_id = self._command_sequence_id
+        status.safety_intent_sequence_id = self._source_intent_sequence_id
+        status.max_abs_linear_x = config.max_abs_linear_x
+        status.max_abs_linear_y = config.max_abs_linear_y
+        status.max_abs_angular_z = config.max_abs_angular_z
+        status.warning_max_abs_linear_x = self._warning_limit(
+            config.warning_max_abs_linear_x,
+            config.max_abs_linear_x,
+        )
+        status.warning_max_abs_linear_y = self._warning_limit(
+            config.warning_max_abs_linear_y,
+            config.max_abs_linear_y,
+        )
+        status.warning_max_abs_angular_z = self._warning_limit(
+            config.warning_max_abs_angular_z,
+            config.max_abs_angular_z,
+        )
         status.commanded_twist = command
 
         self._command_publisher.publish(command)
@@ -290,9 +354,9 @@ class VelocityArbiterNode(Node):
 
     def _on_timer(self) -> None:
         now_ns = self.get_clock().now().nanoseconds
-        result = self._arbiter.arbitrate(
+        result = self._arbiter.evaluate(
             self._desired_velocity,
-            self._safety_state,
+            self._safety_intent,
             now_ns=now_ns,
         )
         self._publish_result(result, now_ns=now_ns)

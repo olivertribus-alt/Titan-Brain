@@ -122,6 +122,16 @@ def test_titan_brain_message_contracts_are_explicit() -> None:
         "uint64 budget_exceeded_count",
         "uint64 invalid_timing_count",
     ]
+    assert _message_fields(messages / "SafetyIntent.msg") == [
+        "uint8 STATE_NORMAL=0",
+        "uint8 STATE_WARNING=1",
+        "uint8 STATE_E_STOP=2",
+        "uint8 STATE_RECOVERY_HOLDING=3",
+        "uint8 state",
+        "builtin_interfaces/Time timestamp",
+        "string correlation_id",
+        "uint64 sequence_id",
+    ]
     assert _message_fields(messages / "ArbitrationStatus.msg") == [
         "uint8 MODE_PASS_THROUGH=0",
         "uint8 MODE_CLAMPED=1",
@@ -129,6 +139,17 @@ def test_titan_brain_message_contracts_are_explicit() -> None:
         "std_msgs/Header header",
         "uint8 mode",
         "string reason",
+        "string policy_version",
+        "string correlation_id",
+        "bool is_safe",
+        "uint64 command_sequence_id",
+        "uint64 safety_intent_sequence_id",
+        "float64 max_abs_linear_x",
+        "float64 max_abs_linear_y",
+        "float64 max_abs_angular_z",
+        "float64 warning_max_abs_linear_x",
+        "float64 warning_max_abs_linear_y",
+        "float64 warning_max_abs_angular_z",
         "geometry_msgs/Twist commanded_twist",
     ]
 
@@ -140,6 +161,7 @@ def test_message_package_declares_rosidl_and_message_dependencies() -> None:
 
     assert {
         "ament_cmake",
+        "builtin_interfaces",
         "geometry_msgs",
         "rosidl_default_generators",
         "rosidl_default_runtime",
@@ -151,6 +173,7 @@ def test_message_package_declares_rosidl_and_message_dependencies() -> None:
     assert '"msg/SafetyEvaluationStatus.msg"' in cmake
     assert '"msg/SafetyStabilityStatus.msg"' in cmake
     assert '"msg/EvaluatorObservabilityStatus.msg"' in cmake
+    assert '"msg/SafetyIntent.msg"' in cmake
     assert '"msg/ArbitrationStatus.msg"' in cmake
 
 
@@ -202,6 +225,9 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
         "max_abs_linear_x",
         "max_abs_linear_y",
         "max_abs_angular_z",
+        "warning_max_abs_linear_x",
+        "warning_max_abs_linear_y",
+        "warning_max_abs_angular_z",
         "dynamic_braking_enabled",
         "safety_policy_version",
         "clearance_threshold_m",
@@ -239,6 +265,9 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert _float_parameter(config_text, "receive_to_decision_budget_s") == 0.05
     assert _float_parameter(config_text, "decision_to_publish_budget_s") == 0.02
     assert _float_parameter(config_text, "end_to_end_budget_s") == 0.07
+    assert _float_parameter(config_text, "warning_max_abs_linear_x") == 0.3
+    assert _float_parameter(config_text, "warning_max_abs_linear_y") == 0.1
+    assert _float_parameter(config_text, "warning_max_abs_angular_z") == 0.5
     assert '"config/titan_brain.yaml"' in setup
     assert '"launch/titan_brain.launch.py"' in setup
     launch_text = launch_file.read_text(encoding="utf-8")
@@ -251,7 +280,8 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert '"/safety/directional_observation"' in e2e_text
     assert '"/safety/stability_status"' in e2e_text
     assert '"/safety/evaluator_observability"' in e2e_text
-    assert '"/cmd_vel_nav"' in e2e_text
+    assert '"/safety/intent"' in e2e_text
+    assert '"/cmd_vel_raw"' in e2e_text
     assert '"/cmd_vel"' in e2e_text
 
 
