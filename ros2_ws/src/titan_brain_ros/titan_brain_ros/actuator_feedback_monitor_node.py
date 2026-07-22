@@ -429,6 +429,8 @@ def main() -> None:
     node = ActuatorFeedbackMonitorNode()
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     finally:
         node.destroy_node()
         _shutdown_rclpy()
