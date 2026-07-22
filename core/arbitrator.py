@@ -672,8 +672,14 @@ class DynamicSafetyCommandArbiter:
             return ArbitrationReason.MOTION_ENVELOPE_TIMEOUT
 
         velocity, _ = _parse_velocity(desired_velocity)
-        if velocity is not None and (
-            velocity.sequence_id <= envelope.ingress_sequence_id
+        # A command that predates both the envelope and its matched intent is
+        # an envelope-ordering fault.  If the envelope arrived after the
+        # NORMAL intent, the recovery release guard remains the more precise
+        # authority over the stale command.
+        if (
+            velocity is not None
+            and velocity.sequence_id <= envelope.ingress_sequence_id
+            and envelope.ingress_sequence_id <= intent.sequence_id
         ):
             return ArbitrationReason.MOTION_ENVELOPE_COMMAND_REQUIRED
         return None

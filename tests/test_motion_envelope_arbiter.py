@@ -459,3 +459,27 @@ def test_explicit_recovery_intent_keeps_authoritative_reason(
     )
 
     _assert_zero(ArbitrationReason.RECOVERY_HOLDING, result)
+
+
+def test_recovery_command_guard_outranks_late_envelope(
+    arbiter: DynamicSafetyCommandArbiter,
+) -> None:
+    """A late envelope cannot hide a command older than NORMAL release."""
+    arbiter.evaluate(
+        _command(sequence_id=2),
+        _intent(SafetyIntentState.E_STOP),
+        now_ns=NOW_NS,
+    )
+
+    result = arbiter.evaluate_with_envelope(
+        _command(sequence_id=3),
+        _intent(sequence_id=10, correlation_id="decision-010"),
+        _envelope(
+            sequence_id=10,
+            correlation_id="decision-010",
+            ingress_sequence_id=11,
+        ),
+        now_ns=NOW_NS,
+    )
+
+    _assert_zero(ArbitrationReason.RECOVERY_COMMAND_REQUIRED, result)
