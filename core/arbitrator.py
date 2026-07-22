@@ -71,6 +71,10 @@ class ArbitrationReason(StrEnum):
     WARNING_TEMPORARY_ZERO = "warning_temporary_zero"
     WARNING_SHAPED = "warning_shaped"
     WARNING_UNMODIFIED = "warning_unmodified"
+    MOTION_ENVELOPE_MISSING = "motion_envelope_missing"
+    MOTION_ENVELOPE_INVALID = "motion_envelope_invalid"
+    MOTION_ENVELOPE_FRAME_MISMATCH = "motion_envelope_frame_mismatch"
+    MOTION_ENVELOPE_CLAMPED = "motion_envelope_clamped"
 
 
 class SafetyIntentState(StrEnum):
@@ -108,6 +112,34 @@ class SafetyIntent(StrictFrozenModel):
         if isinstance(value, str):
             return SafetyIntentState(value)
         return value
+
+
+class PermittedMotionEnvelope(StrictFrozenModel):
+    """Timestamped asymmetric authority consumed by the live arbiter."""
+
+    policy_version: str = Field(min_length=1)
+    timestamp_ns: int = Field(ge=0)
+    frame_id: str = Field(min_length=1)
+    correlation_id: str = Field(min_length=1)
+    sequence_id: int = Field(gt=0)
+    min_linear_x_mps: float = Field(le=0.0)
+    max_linear_x_mps: float = Field(ge=0.0)
+    min_linear_y_mps: float = Field(le=0.0)
+    max_linear_y_mps: float = Field(ge=0.0)
+    min_angular_z_radps: float = Field(le=0.0)
+    max_angular_z_radps: float = Field(ge=0.0)
+
+    @model_validator(mode="after")
+    def enforce_fail_closed_angular_policy(self) -> Self:
+        """Reject angular authority until swept-footprint proof exists."""
+        if (
+            self.min_angular_z_radps != 0.0
+            or self.max_angular_z_radps != 0.0
+        ):
+            raise ValueError(
+                "angular limits must remain zero without a swept-footprint model"
+            )
+        return self
 
 
 class SafetyState(StrictFrozenModel):
@@ -189,6 +221,7 @@ class ArbitrationResult(StrictFrozenModel):
             if self.reason not in {
                 ArbitrationReason.CLAMP_POLICY,
                 ArbitrationReason.WARNING_SHAPED,
+                ArbitrationReason.MOTION_ENVELOPE_CLAMPED,
             }:
                 raise ValueError("CLAMPED requires a shaping policy reason")
         else:
@@ -197,6 +230,7 @@ class ArbitrationResult(StrictFrozenModel):
                 ArbitrationReason.CLAMP_POLICY,
                 ArbitrationReason.WARNING_SHAPED,
                 ArbitrationReason.WARNING_UNMODIFIED,
+                ArbitrationReason.MOTION_ENVELOPE_CLAMPED,
             }:
                 raise ValueError("FORCED_ZERO requires a fail-safe reason")
             if any(
@@ -214,6 +248,7 @@ class ArbitrationResult(StrictFrozenModel):
 VelocityInput: TypeAlias = DesiredVelocity | Mapping[str, object] | None
 SafetyInput: TypeAlias = SafetyState | Mapping[str, object] | None
 IntentInput: TypeAlias = SafetyIntent | Mapping[str, object] | None
+EnvelopeInput: TypeAlias = PermittedMotionEnvelope | Mapping[str, object] | None
 
 
 def _checked_now_ns(value: object) -> int | None:
@@ -257,8 +292,26 @@ def _parse_safety_intent(
         return None, True
 
 
+def _parse_motion_envelope(
+    value: EnvelopeInput,
+) -> tuple[PermittedMotionEnvelope | None, bool]:
+    if value is None:
+        return None, False
+    if isinstance(value, PermittedMotionEnvelope):
+        return value, True
+    try:
+        return PermittedMotionEnvelope.model_validate(value), True
+    except ValidationError:
+        return None, True
+
+
 def _clamp(value: float, limit: float) -> float:
     clamped = max(-limit, min(limit, value))
+    return 0.0 if clamped == 0.0 else clamped
+
+
+def _clamp_range(value: float, minimum: float, maximum: float) -> float:
+    clamped = max(minimum, min(maximum, value))
     return 0.0 if clamped == 0.0 else clamped
 
 
@@ -737,4 +790,83 @@ class DynamicSafetyCommandArbiter:
             reason=ArbitrationReason.PROCEED,
             policy_version=self._config.policy_version,
             correlation_id=correlation_id,
+        )
+
+    def evaluate_with_envelope(
+        self,
+        desired_velocity: VelocityInput,
+        safety_intent: IntentInput,
+        motion_envelope: EnvelopeInput,
+        *,
+        now_ns: object,
+    ) -> ArbitrationResult:
+        """Apply mandatory asymmetric motion authority after safety intent."""
+        result = self.evaluate(
+            desired_velocity,
+            safety_intent,
+            now_ns=now_ns,
+        )
+        if result.mode is ArbitrationMode.FORCED_ZERO:
+            return result
+
+        envelope, envelope_was_supplied = _parse_motion_envelope(
+            motion_envelope
+        )
+        if envelope is None:
+            return self._zero(
+                (
+                    ArbitrationReason.MOTION_ENVELOPE_INVALID
+                    if envelope_was_supplied
+                    else ArbitrationReason.MOTION_ENVELOPE_MISSING
+                ),
+                timestamp_ns=result.command.timestamp_ns,
+                correlation_id=result.correlation_id,
+            )
+        if envelope.frame_id != self._config.output_frame_id:
+            return self._zero(
+                ArbitrationReason.MOTION_ENVELOPE_FRAME_MISMATCH,
+                timestamp_ns=result.command.timestamp_ns,
+                correlation_id=result.correlation_id,
+            )
+
+        velocity = result.command
+        command = DesiredVelocity(
+            linear_x=_clamp_range(
+                velocity.linear_x,
+                envelope.min_linear_x_mps,
+                envelope.max_linear_x_mps,
+            ),
+            linear_y=_clamp_range(
+                velocity.linear_y,
+                envelope.min_linear_y_mps,
+                envelope.max_linear_y_mps,
+            ),
+            angular_z=_clamp_range(
+                velocity.angular_z,
+                envelope.min_angular_z_radps,
+                envelope.max_angular_z_radps,
+            ),
+            timestamp_ns=velocity.timestamp_ns,
+            frame_id=velocity.frame_id,
+            sequence_id=velocity.sequence_id,
+        )
+        shaped = (
+            command.linear_x,
+            command.linear_y,
+            command.angular_z,
+        ) != (
+            velocity.linear_x,
+            velocity.linear_y,
+            velocity.angular_z,
+        )
+        if not shaped:
+            return result
+
+        self._last_output = command
+        return ArbitrationResult(
+            command=command,
+            mode=ArbitrationMode.CLAMPED,
+            reason=ArbitrationReason.MOTION_ENVELOPE_CLAMPED,
+            policy_version=self._config.policy_version,
+            correlation_id=result.correlation_id,
         )

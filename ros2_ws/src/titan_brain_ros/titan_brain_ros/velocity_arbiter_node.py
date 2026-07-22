@@ -15,12 +15,16 @@ from rclpy.qos import (
     ReliabilityPolicy,
 )
 from titan_brain_msgs.msg import ArbitrationStatus as ArbitrationStatusMsg
+from titan_brain_msgs.msg import (
+    PermittedMotionEnvelope as PermittedMotionEnvelopeMsg,
+)
 from titan_brain_msgs.msg import SafetyIntent as SafetyIntentMsg
 
 from core.arbitrator import (
     ArbitrationMode,
     ArbitrationResult,
     DynamicSafetyCommandArbiter,
+    EnvelopeInput,
     IntentInput,
     SafetyIntentState,
     VelocityArbiterConfig,
@@ -88,6 +92,13 @@ def _intent_timestamp_ns(message: SafetyIntentMsg) -> int:
     return (
         int(message.timestamp.sec) * _NANOSECONDS_PER_SECOND
         + int(message.timestamp.nanosec)
+    )
+
+
+def _envelope_timestamp_ns(message: PermittedMotionEnvelopeMsg) -> int:
+    return (
+        int(message.header.stamp.sec) * _NANOSECONDS_PER_SECOND
+        + int(message.header.stamp.nanosec)
     )
 
 
@@ -203,6 +214,7 @@ class VelocityArbiterNode(Node):
         )
         self._desired_velocity: VelocityInput = None
         self._safety_intent: IntentInput = None
+        self._motion_envelope: EnvelopeInput = None
         self._ingress_sequence_id = 0
         self._command_sequence_id = 0
         self._source_intent_sequence_id = 0
@@ -233,6 +245,12 @@ class VelocityArbiterNode(Node):
             SafetyIntentMsg,
             "/safety/intent",
             self._on_safety_intent,
+            status_qos_profile(),
+        )
+        self._motion_envelope_subscription = self.create_subscription(
+            PermittedMotionEnvelopeMsg,
+            "/safety/permitted_motion_envelope",
+            self._on_motion_envelope,
             status_qos_profile(),
         )
         self._arbitration_timer = self.create_timer(
@@ -327,6 +345,24 @@ class VelocityArbiterNode(Node):
             "sequence_id": self._next_ingress_sequence_id(),
         }
 
+    def _on_motion_envelope(
+        self,
+        message: PermittedMotionEnvelopeMsg,
+    ) -> None:
+        self._motion_envelope = {
+            "policy_version": str(message.policy_version),
+            "timestamp_ns": _envelope_timestamp_ns(message),
+            "frame_id": str(message.header.frame_id),
+            "correlation_id": str(message.correlation_id),
+            "sequence_id": int(message.sequence_id),
+            "min_linear_x_mps": float(message.min_linear_x_mps),
+            "max_linear_x_mps": float(message.max_linear_x_mps),
+            "min_linear_y_mps": float(message.min_linear_y_mps),
+            "max_linear_y_mps": float(message.max_linear_y_mps),
+            "min_angular_z_radps": float(message.min_angular_z_radps),
+            "max_angular_z_radps": float(message.max_angular_z_radps),
+        }
+
     def _warning_limit(self, warning: float | None, nominal: float) -> float:
         return nominal if warning is None else warning
 
@@ -383,9 +419,10 @@ class VelocityArbiterNode(Node):
 
     def _on_timer(self) -> None:
         now_ns = self.get_clock().now().nanoseconds
-        result = self._arbiter.evaluate(
+        result = self._arbiter.evaluate_with_envelope(
             self._desired_velocity,
             self._safety_intent,
+            self._motion_envelope,
             now_ns=now_ns,
         )
         self._publish_result(result)

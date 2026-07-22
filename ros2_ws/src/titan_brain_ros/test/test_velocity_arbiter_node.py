@@ -6,7 +6,11 @@ import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.parameter import Parameter
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, ReliabilityPolicy
-from titan_brain_msgs.msg import ArbitrationStatus, SafetyIntent
+from titan_brain_msgs.msg import (
+    ArbitrationStatus,
+    PermittedMotionEnvelope,
+    SafetyIntent,
+)
 from titan_brain_ros.velocity_arbiter_node import (
     VelocityArbiterNode,
     command_qos_profile,
@@ -36,7 +40,9 @@ def _parameters() -> list[Parameter]:
 
 
 def _node() -> VelocityArbiterNode:
-    return VelocityArbiterNode(parameter_overrides=_parameters())
+    node = VelocityArbiterNode(parameter_overrides=_parameters())
+    node._on_motion_envelope(_envelope(node))
+    return node
 
 
 def _set_intent_stamp(message: SafetyIntent, timestamp_ns: int) -> None:
@@ -65,11 +71,37 @@ def _intent(
     return message
 
 
+def _envelope(
+    node: VelocityArbiterNode,
+    *,
+    min_linear_x_mps: float = -0.8,
+    max_linear_x_mps: float = 0.8,
+    min_linear_y_mps: float = -0.2,
+    max_linear_y_mps: float = 0.2,
+    min_angular_z_radps: float = 0.0,
+    max_angular_z_radps: float = 0.0,
+    frame_id: str = "base_link",
+) -> PermittedMotionEnvelope:
+    message = PermittedMotionEnvelope()
+    message.header.stamp = node.get_clock().now().to_msg()
+    message.header.frame_id = frame_id
+    message.policy_version = "TB-EVAL-005C-ENVELOPE-0.1.0"
+    message.correlation_id = "envelope-001"
+    message.sequence_id = 1
+    message.min_linear_x_mps = min_linear_x_mps
+    message.max_linear_x_mps = max_linear_x_mps
+    message.min_linear_y_mps = min_linear_y_mps
+    message.max_linear_y_mps = max_linear_y_mps
+    message.min_angular_z_radps = min_angular_z_radps
+    message.max_angular_z_radps = max_angular_z_radps
+    return message
+
+
 def _desired_twist(
     *,
     linear_x: float = 0.4,
     linear_y: float = 0.1,
-    angular_z: float = 0.5,
+    angular_z: float = 0.0,
 ) -> Twist:
     message = Twist()
     message.linear.x = linear_x
@@ -115,6 +147,7 @@ def test_startup_is_forced_zero_and_node_owns_control_plane_topics() -> None:
         assert node.count_publishers("/safety/arbitration_status") == 1
         assert node.count_subscribers("/cmd_vel_raw") == 1
         assert node.count_subscribers("/safety/intent") == 1
+        assert node.count_subscribers("/safety/permitted_motion_envelope") == 1
     finally:
         node.destroy_node()
         rclpy.shutdown()
@@ -134,7 +167,7 @@ def test_fresh_normal_intent_and_newer_command_are_passed_through() -> None:
         assert result.mode is ArbitrationMode.PASS_THROUGH
         assert result.command.linear_x == 0.4
         assert result.command.linear_y == 0.1
-        assert result.command.angular_z == 0.5
+        assert result.command.angular_z == 0.0
         assert result.correlation_id == "decision-001"
         assert status is not None
         assert status.mode == ArbitrationStatus.MODE_PASS_THROUGH
@@ -190,7 +223,7 @@ def test_warning_uses_symmetric_limits_and_non_acceleration_baseline() -> None:
     try:
         node._on_safety_intent(_intent(node))
         node._on_desired_velocity(
-            _desired_twist(linear_x=0.4, linear_y=0.1, angular_z=0.4)
+            _desired_twist(linear_x=0.4, linear_y=0.1, angular_z=0.0)
         )
         node._on_timer()
 
@@ -203,7 +236,7 @@ def test_warning_uses_symmetric_limits_and_non_acceleration_baseline() -> None:
             )
         )
         node._on_desired_velocity(
-            _desired_twist(linear_x=-2.0, linear_y=-1.0, angular_z=3.0)
+            _desired_twist(linear_x=-2.0, linear_y=-1.0, angular_z=0.0)
         )
         node._on_timer()
 
@@ -213,13 +246,77 @@ def test_warning_uses_symmetric_limits_and_non_acceleration_baseline() -> None:
         assert result.reason is ArbitrationReason.WARNING_SHAPED
         assert result.command.linear_x == -0.3
         assert result.command.linear_y == -0.1
-        assert result.command.angular_z == 0.4
+        assert result.command.angular_z == 0.0
         assert status is not None
         assert status.mode == ArbitrationStatus.MODE_CLAMPED
         assert status.correlation_id == "decision-warning"
         assert status.warning_max_abs_angular_z == 0.5
     finally:
         node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_asymmetric_envelope_clamps_translation_and_blocks_rotation() -> None:
+    rclpy.init()
+    node = _node()
+    try:
+        node._on_motion_envelope(
+            _envelope(
+                node,
+                min_linear_x_mps=-0.2,
+                max_linear_x_mps=0.4,
+                min_linear_y_mps=-0.3,
+                max_linear_y_mps=0.1,
+            )
+        )
+        node._on_safety_intent(_intent(node))
+        node._on_desired_velocity(
+            _desired_twist(linear_x=2.0, linear_y=-2.0, angular_z=1.0)
+        )
+        node._on_timer()
+
+        result = node.last_result
+        assert result is not None
+        assert result.reason is ArbitrationReason.MOTION_ENVELOPE_CLAMPED
+        assert result.mode is ArbitrationMode.CLAMPED
+        assert result.command.linear_x == 0.4
+        assert result.command.linear_y == -0.3
+        assert result.command.angular_z == 0.0
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_missing_and_invalid_envelopes_fail_closed() -> None:
+    rclpy.init()
+    missing_node = _node()
+    invalid_node = _node()
+    try:
+        missing_node._motion_envelope = None
+        missing_node._on_safety_intent(_intent(missing_node))
+        missing_node._on_desired_velocity(_desired_twist())
+        missing_node._on_timer()
+        assert missing_node.last_result is not None
+        assert (
+            missing_node.last_result.reason
+            is ArbitrationReason.MOTION_ENVELOPE_MISSING
+        )
+
+        invalid_node._on_motion_envelope(
+            _envelope(invalid_node, max_angular_z_radps=0.1)
+        )
+        invalid_node._on_safety_intent(_intent(invalid_node))
+        invalid_node._on_desired_velocity(_desired_twist())
+        invalid_node._on_timer()
+        assert invalid_node.last_result is not None
+        assert (
+            invalid_node.last_result.reason
+            is ArbitrationReason.MOTION_ENVELOPE_INVALID
+        )
+        assert invalid_node.last_result.command.linear_x == 0.0
+    finally:
+        missing_node.destroy_node()
+        invalid_node.destroy_node()
         rclpy.shutdown()
 
 

@@ -1,0 +1,11 @@
+# Authoritative asymmetric motion limits derived from directional clearance.
+std_msgs/Header header
+string policy_version
+string correlation_id
+uint64 sequence_id
+float64 min_linear_x_mps
+float64 max_linear_x_mps
+float64 min_linear_y_mps
+float64 max_linear_y_mps
+float64 min_angular_z_radps
+float64 max_angular_z_radps

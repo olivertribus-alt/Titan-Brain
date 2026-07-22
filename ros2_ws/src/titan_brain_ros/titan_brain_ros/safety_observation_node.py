@@ -24,6 +24,9 @@ from titan_brain_msgs.msg import (
 from titan_brain_msgs.msg import (
     EvaluatorObservabilityStatus as EvaluatorObservabilityStatusMsg,
 )
+from titan_brain_msgs.msg import (
+    PermittedMotionEnvelope as PermittedMotionEnvelopeMsg,
+)
 from titan_brain_msgs.msg import SafetyEvaluationStatus as SafetyEvaluationStatusMsg
 from titan_brain_msgs.msg import SafetyIntent as SafetyIntentMsg
 from titan_brain_msgs.msg import SafetyObservation as SafetyObservationMsg
@@ -44,6 +47,10 @@ from core.adapters.ros_observation import (
 )
 from core.braking import BrakingEnvelopeConfig
 from core.incident_store import FileIncidentStore, IncidentStoreError
+from core.motion_envelope import (
+    PlanarVelocityLimits,
+    calculate_directional_motion_envelope,
+)
 from core.observability import (
     EvaluationObservabilityReport,
     EvaluationOutcome,
@@ -226,7 +233,28 @@ class SafetyObservationNode(Node):
             self.declare_parameter("dynamic_braking_enabled", False).value
         )
         safety_rules: SafetyRuleConfig | None = None
+        braking_config: BrakingEnvelopeConfig | None = None
         if dynamic_braking_enabled:
+            braking_config = BrakingEnvelopeConfig(
+                policy_version=_required_text_parameter(
+                    self,
+                    "braking_policy_version",
+                ),
+                reaction_time_ns=_required_positive_integer_parameter(
+                    self,
+                    "reaction_time_ns",
+                ),
+                assured_deceleration_mps2=_required_finite_parameter(
+                    self,
+                    "assured_deceleration_mps2",
+                    allow_zero=False,
+                ),
+                clearance_margin_m=_required_finite_parameter(
+                    self,
+                    "clearance_margin_m",
+                    allow_zero=True,
+                ),
+            )
             safety_rules = SafetyRuleConfig(
                 policy_version=_required_text_parameter(
                     self,
@@ -241,26 +269,7 @@ class SafetyObservationNode(Node):
                     self,
                     "confidence_threshold",
                 ),
-                braking_envelope=BrakingEnvelopeConfig(
-                    policy_version=_required_text_parameter(
-                        self,
-                        "braking_policy_version",
-                    ),
-                    reaction_time_ns=_required_positive_integer_parameter(
-                        self,
-                        "reaction_time_ns",
-                    ),
-                    assured_deceleration_mps2=_required_finite_parameter(
-                        self,
-                        "assured_deceleration_mps2",
-                        allow_zero=False,
-                    ),
-                    clearance_margin_m=_required_finite_parameter(
-                        self,
-                        "clearance_margin_m",
-                        allow_zero=True,
-                    ),
-                ),
+                braking_envelope=braking_config,
             )
 
         stability_enabled = bool(
@@ -342,6 +351,12 @@ class SafetyObservationNode(Node):
             ),
         )
         self._target_frame = target_frame
+        self._motion_envelope_frame_id = _text_parameter(
+            self,
+            "motion_envelope_frame_id",
+            "base_link",
+        )
+        self._braking_config = braking_config
         self._stability_config = stability_config
         self._tf_timeout = Duration(
             nanoseconds=_seconds_to_ns(tf_timeout_sec, name="tf_timeout_sec")
@@ -355,6 +370,7 @@ class SafetyObservationNode(Node):
         self._observability = EvaluatorObservability(observability_config)
         self._safety_intent_sequence_id = 0
         self._last_safety_intent: SafetyIntentMsg | None = None
+        self._last_motion_envelope: PermittedMotionEnvelopeMsg | None = None
         self._watchdog_stop_status: WatchdogStatus | None = None
 
         self._tf_buffer = Buffer()
@@ -377,6 +393,11 @@ class SafetyObservationNode(Node):
         self._safety_intent_publisher = self.create_publisher(
             SafetyIntentMsg,
             "/safety/intent",
+            status_qos_profile(),
+        )
+        self._motion_envelope_publisher = self.create_publisher(
+            PermittedMotionEnvelopeMsg,
+            "/safety/permitted_motion_envelope",
             status_qos_profile(),
         )
         self._observation_subscription = self.create_subscription(
@@ -413,6 +434,11 @@ class SafetyObservationNode(Node):
     def last_safety_intent(self) -> SafetyIntentMsg | None:
         """Return the latest authoritative control-plane message."""
         return self._last_safety_intent
+
+    @property
+    def last_motion_envelope(self) -> PermittedMotionEnvelopeMsg | None:
+        """Return the latest directional motion-authority message."""
+        return self._last_motion_envelope
 
     @staticmethod
     def _message_timestamp_ns(message: ObservationMessage) -> int:
@@ -560,6 +586,11 @@ class SafetyObservationNode(Node):
             state=_safety_intent_state(result),
             correlation_id=report.correlation_id,
         )
+        self._publish_motion_envelope(
+            published_at,
+            correlation_id=report.correlation_id,
+            result=result,
+        )
         self._watchdog_stop_status = None
         self._publish_observability(report, published_at=published_at)
         self._status_publisher.publish(status)
@@ -580,6 +611,58 @@ class SafetyObservationNode(Node):
         message.sequence_id = self._safety_intent_sequence_id
         self._safety_intent_publisher.publish(message)
         self._last_safety_intent = message
+
+    def _publish_motion_envelope(
+        self,
+        now: Time,
+        *,
+        correlation_id: str,
+        result: RosObservationProcessingResult | None,
+    ) -> None:
+        config = self._braking_config
+        if config is None:
+            return
+
+        limits = PlanarVelocityLimits(
+            min_linear_x_mps=0.0,
+            max_linear_x_mps=0.0,
+            min_linear_y_mps=0.0,
+            max_linear_y_mps=0.0,
+            max_abs_angular_z_radps=0.0,
+        )
+        observation = (
+            result.adaptation.observation if result is not None else None
+        )
+        directional = (
+            observation.directional_data
+            if observation is not None
+            else None
+        )
+        if directional is not None:
+            try:
+                limits = calculate_directional_motion_envelope(
+                    directional.clearances,
+                    config,
+                ).velocity_limits
+            except (ValidationError, ValueError) as error:
+                self.get_logger().error(
+                    f"Motion-envelope calculation failed closed: {error}"
+                )
+
+        message = PermittedMotionEnvelopeMsg()
+        message.header.stamp = now.to_msg()
+        message.header.frame_id = self._motion_envelope_frame_id
+        message.policy_version = config.policy_version
+        message.correlation_id = correlation_id
+        message.sequence_id = self._safety_intent_sequence_id
+        message.min_linear_x_mps = limits.min_linear_x_mps
+        message.max_linear_x_mps = limits.max_linear_x_mps
+        message.min_linear_y_mps = limits.min_linear_y_mps
+        message.max_linear_y_mps = limits.max_linear_y_mps
+        message.min_angular_z_radps = 0.0
+        message.max_angular_z_radps = limits.max_abs_angular_z_radps
+        self._motion_envelope_publisher.publish(message)
+        self._last_motion_envelope = message
 
     def _record_observability(
         self,
@@ -673,6 +756,11 @@ class SafetyObservationNode(Node):
             published_at,
             state=SafetyIntentMsg.STATE_E_STOP,
             correlation_id=report.correlation_id,
+        )
+        self._publish_motion_envelope(
+            published_at,
+            correlation_id=report.correlation_id,
+            result=None,
         )
         self._watchdog_stop_status = None
         self._publish_observability(report, published_at=published_at)
@@ -771,12 +859,18 @@ class SafetyObservationNode(Node):
             in {WatchdogStatus.TIMED_OUT, WatchdogStatus.CLOCK_REGRESSION}
             and watchdog.status is not self._watchdog_stop_status
         ):
+            correlation_id = (
+                f"watchdog_{watchdog.status.value}_{now.nanoseconds}"
+            )
             self._publish_safety_intent(
                 now,
                 state=SafetyIntentMsg.STATE_E_STOP,
-                correlation_id=(
-                    f"watchdog_{watchdog.status.value}_{now.nanoseconds}"
-                ),
+                correlation_id=correlation_id,
+            )
+            self._publish_motion_envelope(
+                now,
+                correlation_id=correlation_id,
+                result=None,
             )
             self._watchdog_stop_status = watchdog.status
 

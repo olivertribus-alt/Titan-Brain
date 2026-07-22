@@ -30,6 +30,7 @@ from titan_brain_msgs.msg import (
     CommandPathObservabilityStatus,
     DirectionalSafetyObservation,
     EvaluatorObservabilityStatus,
+    PermittedMotionEnvelope,
     SafetyEvaluationStatus,
     SafetyIntent,
     SafetyObservation,
@@ -99,6 +100,7 @@ class TestTitanBrainTransport(unittest.TestCase):
         cls.observability_events: list[EvaluatorObservabilityStatus] = []
         cls.stability_events: list[SafetyStabilityStatus] = []
         cls.intent_events: list[SafetyIntent] = []
+        cls.motion_envelope_events: list[PermittedMotionEnvelope] = []
         cls.command_path_events: list[CommandPathObservabilityStatus] = []
 
         cls.observation_publisher = cls.node.create_publisher(
@@ -152,6 +154,12 @@ class TestTitanBrainTransport(unittest.TestCase):
             cls._on_intent,
             _status_qos(),
         )
+        cls.motion_envelope_subscription = cls.node.create_subscription(
+            PermittedMotionEnvelope,
+            "/safety/permitted_motion_envelope",
+            cls._on_motion_envelope,
+            _status_qos(),
+        )
         cls.command_path_subscription = cls.node.create_subscription(
             CommandPathObservabilityStatus,
             "/safety/command_path_observability",
@@ -199,6 +207,10 @@ class TestTitanBrainTransport(unittest.TestCase):
     @classmethod
     def _on_intent(cls, message: SafetyIntent) -> None:
         cls.intent_events.append(message)
+
+    @classmethod
+    def _on_motion_envelope(cls, message: PermittedMotionEnvelope) -> None:
+        cls.motion_envelope_events.append(message)
 
     @classmethod
     def _on_command_path(cls, message: CommandPathObservabilityStatus) -> None:
@@ -316,6 +328,15 @@ class TestTitanBrainTransport(unittest.TestCase):
             (message.state, message.sequence_id, message.correlation_id)
             for message in self.intent_events[-10:]
         ]
+        envelope_states = [
+            (
+                message.sequence_id,
+                message.correlation_id,
+                message.min_linear_x_mps,
+                message.max_linear_x_mps,
+            )
+            for message in self.motion_envelope_events[-10:]
+        ]
         command_path_states = [
             (
                 message.arbitration_reason,
@@ -330,6 +351,7 @@ class TestTitanBrainTransport(unittest.TestCase):
             f"recent stability states={stability_states!r}; "
             f"recent observability states={observability_states!r}; "
             f"recent intents={intent_states!r}; "
+            f"recent envelopes={envelope_states!r}; "
             f"recent command paths={command_path_states!r}"
         )
 
@@ -414,6 +436,12 @@ class TestTitanBrainTransport(unittest.TestCase):
                 for intent in self.intent_events
             ):
                 continue
+            if not any(
+                envelope.correlation_id == path.correlation_id
+                and envelope.sequence_id == path.safety_intent_sequence_id
+                for envelope in self.motion_envelope_events
+            ):
+                continue
             if any(
                 status.correlation_id == path.correlation_id
                 and status.reason == path.arbitration_reason
@@ -449,6 +477,7 @@ class TestTitanBrainTransport(unittest.TestCase):
         self.evaluation_events.clear()
         self.stability_events.clear()
         self.intent_events.clear()
+        self.motion_envelope_events.clear()
         self.command_path_events.clear()
 
     def test_complete_safety_transport_pipeline(self) -> None:
@@ -464,6 +493,10 @@ class TestTitanBrainTransport(unittest.TestCase):
                 and self.node.count_publishers("/safety/evaluation_status") == 1
                 and self.node.count_publishers("/safety/stability_status") == 1
                 and self.node.count_publishers("/safety/intent") == 1
+                and self.node.count_publishers(
+                    "/safety/permitted_motion_envelope"
+                )
+                == 1
                 and self.node.count_publishers(
                     "/safety/command_path_observability"
                 )
