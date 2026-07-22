@@ -58,6 +58,28 @@ class ArbitrationReason(StrEnum):
     COMMAND_CLOCK_REGRESSION = "command_clock_regression"
     COMMAND_FRAME_MISMATCH = "command_frame_mismatch"
     CURRENT_TIME_INVALID = "current_time_invalid"
+    SAFETY_INTENT_MISSING = "safety_intent_missing"
+    SAFETY_INTENT_INVALID = "safety_intent_invalid"
+    SAFETY_INTENT_TIMEOUT = "safety_intent_timeout"
+    SAFETY_INTENT_SEQUENCE_REGRESSION = "safety_intent_sequence_regression"
+    COMMAND_TIMEOUT = "command_timeout"
+    COMMAND_SEQUENCE_REGRESSION = "command_sequence_regression"
+    ARBITER_CLOCK_REGRESSION = "arbiter_clock_regression"
+    E_STOP_ACTIVE = "e_stop_active"
+    RECOVERY_HOLDING = "recovery_holding"
+    RECOVERY_COMMAND_REQUIRED = "recovery_command_required"
+    WARNING_TEMPORARY_ZERO = "warning_temporary_zero"
+    WARNING_SHAPED = "warning_shaped"
+    WARNING_UNMODIFIED = "warning_unmodified"
+
+
+class SafetyIntentState(StrEnum):
+    """Authoritative control-plane state consumed by TB-EVAL-004."""
+
+    NORMAL = "normal"
+    WARNING = "warning"
+    E_STOP = "e_stop"
+    RECOVERY_HOLDING = "recovery_holding"
 
 
 class DesiredVelocity(StrictFrozenModel):
@@ -68,6 +90,24 @@ class DesiredVelocity(StrictFrozenModel):
     angular_z: float
     timestamp_ns: int = Field(ge=0)
     frame_id: str = Field(min_length=1)
+    sequence_id: int = Field(default=0, ge=0)
+
+
+class SafetyIntent(StrictFrozenModel):
+    """Fresh, globally ordered evaluator authority independent of diagnostics."""
+
+    state: SafetyIntentState
+    timestamp_ns: int = Field(ge=0)
+    correlation_id: str = Field(min_length=1)
+    sequence_id: int = Field(gt=0)
+
+    @field_validator("state", mode="before")
+    @classmethod
+    def parse_state(cls, value: object) -> object:
+        """Accept exact wire values without enabling broad coercion."""
+        if isinstance(value, str):
+            return SafetyIntentState(value)
+        return value
 
 
 class SafetyState(StrictFrozenModel):
@@ -105,6 +145,24 @@ class VelocityArbiterConfig(StrictFrozenModel):
     max_abs_linear_x: float = Field(ge=0.0)
     max_abs_linear_y: float = Field(ge=0.0)
     max_abs_angular_z: float = Field(ge=0.0)
+    warning_max_abs_linear_x: float | None = Field(default=None, ge=0.0)
+    warning_max_abs_linear_y: float | None = Field(default=None, ge=0.0)
+    warning_max_abs_angular_z: float | None = Field(default=None, ge=0.0)
+
+    @model_validator(mode="after")
+    def validate_warning_limits(self) -> Self:
+        """Prevent WARNING policy from exceeding nominal component limits."""
+        pairs = (
+            (self.warning_max_abs_linear_x, self.max_abs_linear_x),
+            (self.warning_max_abs_linear_y, self.max_abs_linear_y),
+            (self.warning_max_abs_angular_z, self.max_abs_angular_z),
+        )
+        if any(
+            warning is not None and warning > nominal
+            for warning, nominal in pairs
+        ):
+            raise ValueError("WARNING limits must not exceed nominal limits")
+        return self
 
 
 class ArbitrationResult(StrictFrozenModel):
@@ -114,20 +172,31 @@ class ArbitrationResult(StrictFrozenModel):
     mode: ArbitrationMode
     reason: ArbitrationReason
     policy_version: str = Field(min_length=1)
+    correlation_id: str | None = None
 
     @model_validator(mode="after")
     def validate_result_shape(self) -> Self:
         """Keep mode, reason, and forced-zero output mutually consistent."""
         if self.mode is ArbitrationMode.PASS_THROUGH:
-            if self.reason is not ArbitrationReason.PROCEED:
-                raise ValueError("PASS_THROUGH requires the PROCEED reason")
+            if self.reason not in {
+                ArbitrationReason.PROCEED,
+                ArbitrationReason.WARNING_UNMODIFIED,
+            }:
+                raise ValueError(
+                    "PASS_THROUGH requires a pass-through policy reason"
+                )
         elif self.mode is ArbitrationMode.CLAMPED:
-            if self.reason is not ArbitrationReason.CLAMP_POLICY:
-                raise ValueError("CLAMPED requires the CLAMP_POLICY reason")
+            if self.reason not in {
+                ArbitrationReason.CLAMP_POLICY,
+                ArbitrationReason.WARNING_SHAPED,
+            }:
+                raise ValueError("CLAMPED requires a shaping policy reason")
         else:
             if self.reason in {
                 ArbitrationReason.PROCEED,
                 ArbitrationReason.CLAMP_POLICY,
+                ArbitrationReason.WARNING_SHAPED,
+                ArbitrationReason.WARNING_UNMODIFIED,
             }:
                 raise ValueError("FORCED_ZERO requires a fail-safe reason")
             if any(
@@ -144,6 +213,7 @@ class ArbitrationResult(StrictFrozenModel):
 
 VelocityInput: TypeAlias = DesiredVelocity | Mapping[str, object] | None
 SafetyInput: TypeAlias = SafetyState | Mapping[str, object] | None
+IntentInput: TypeAlias = SafetyIntent | Mapping[str, object] | None
 
 
 def _checked_now_ns(value: object) -> int | None:
@@ -170,6 +240,19 @@ def _parse_safety_state(value: SafetyInput) -> tuple[SafetyState | None, bool]:
         return value, True
     try:
         return SafetyState.model_validate(value), True
+    except (ValidationError, ValueError):
+        return None, True
+
+
+def _parse_safety_intent(
+    value: IntentInput,
+) -> tuple[SafetyIntent | None, bool]:
+    if value is None:
+        return None, False
+    if isinstance(value, SafetyIntent):
+        return value, True
+    try:
+        return SafetyIntent.model_validate(value), True
     except (ValidationError, ValueError):
         return None, True
 
@@ -332,4 +415,326 @@ class VelocityArbiter:
             mode=ArbitrationMode.CLAMPED,
             reason=ArbitrationReason.CLAMP_POLICY,
             policy_version=self._config.policy_version,
+        )
+
+
+class DynamicSafetyCommandArbiter:
+    """Stateful fail-closed SafetyIntent arbiter for TB-EVAL-004A.
+
+    Commands and intents use one global ingress ``sequence_id`` domain. A
+    command can resume motion only when its sequence follows the NORMAL intent
+    that explicitly released the last stop.
+    """
+
+    def __init__(self, config: VelocityArbiterConfig) -> None:
+        self._config = config
+        self._last_now_ns: int | None = None
+        self._last_intent_sequence_id: int | None = None
+        self._last_command_sequence_id: int | None = None
+        self._last_intent: SafetyIntent | None = None
+        self._last_command: DesiredVelocity | None = None
+        self._blocked_after_intent_sequence_id = 0
+        self._release_sequence_id: int | None = None
+        self._requires_new_normal = True
+        self._last_output: DesiredVelocity | None = None
+
+    @property
+    def config(self) -> VelocityArbiterConfig:
+        """Return the immutable timing and frame policy."""
+        return self._config
+
+    @property
+    def recovery_latched(self) -> bool:
+        """Return whether a new NORMAL intent is required before motion."""
+        return self._requires_new_normal
+
+    @property
+    def last_output(self) -> DesiredVelocity | None:
+        """Return the last authoritative output used by the warning guard."""
+        return self._last_output
+
+    def _zero(
+        self,
+        reason: ArbitrationReason,
+        *,
+        timestamp_ns: int,
+        correlation_id: str | None = None,
+    ) -> ArbitrationResult:
+        command = DesiredVelocity(
+            linear_x=0.0,
+            linear_y=0.0,
+            angular_z=0.0,
+            timestamp_ns=timestamp_ns,
+            frame_id=self._config.output_frame_id,
+        )
+        self._last_output = command
+        return ArbitrationResult(
+            command=command,
+            mode=ArbitrationMode.FORCED_ZERO,
+            reason=reason,
+            policy_version=self._config.policy_version,
+            correlation_id=correlation_id,
+        )
+
+    @staticmethod
+    def _warning_component(
+        value: float,
+        *,
+        limit: float,
+        previous: float,
+    ) -> float:
+        saturated = _clamp(value, limit)
+        magnitude = min(abs(saturated), abs(previous))
+        if magnitude == 0.0:
+            return 0.0
+        return -magnitude if saturated < 0.0 else magnitude
+
+    def _warning_result(
+        self,
+        velocity: DesiredVelocity,
+        *,
+        correlation_id: str,
+    ) -> ArbitrationResult:
+        previous = self._last_output
+        previous_linear_x = previous.linear_x if previous is not None else 0.0
+        previous_linear_y = previous.linear_y if previous is not None else 0.0
+        previous_angular_z = previous.angular_z if previous is not None else 0.0
+        config = self._config
+        command = DesiredVelocity(
+            linear_x=self._warning_component(
+                velocity.linear_x,
+                limit=(
+                    config.warning_max_abs_linear_x
+                    if config.warning_max_abs_linear_x is not None
+                    else config.max_abs_linear_x
+                ),
+                previous=previous_linear_x,
+            ),
+            linear_y=self._warning_component(
+                velocity.linear_y,
+                limit=(
+                    config.warning_max_abs_linear_y
+                    if config.warning_max_abs_linear_y is not None
+                    else config.max_abs_linear_y
+                ),
+                previous=previous_linear_y,
+            ),
+            angular_z=self._warning_component(
+                velocity.angular_z,
+                limit=(
+                    config.warning_max_abs_angular_z
+                    if config.warning_max_abs_angular_z is not None
+                    else config.max_abs_angular_z
+                ),
+                previous=previous_angular_z,
+            ),
+            timestamp_ns=velocity.timestamp_ns,
+            frame_id=velocity.frame_id,
+            sequence_id=velocity.sequence_id,
+        )
+        shaped = (
+            command.linear_x,
+            command.linear_y,
+            command.angular_z,
+        ) != (
+            velocity.linear_x,
+            velocity.linear_y,
+            velocity.angular_z,
+        )
+        self._last_output = command
+        return ArbitrationResult(
+            command=command,
+            mode=(ArbitrationMode.CLAMPED if shaped else ArbitrationMode.PASS_THROUGH),
+            reason=(
+                ArbitrationReason.WARNING_SHAPED
+                if shaped
+                else ArbitrationReason.WARNING_UNMODIFIED
+            ),
+            policy_version=config.policy_version,
+            correlation_id=correlation_id,
+        )
+
+    def _latch(self, intent: SafetyIntent | None) -> None:
+        self._requires_new_normal = True
+        self._release_sequence_id = None
+        sequence_id = (
+            intent.sequence_id
+            if intent is not None
+            else self._last_intent_sequence_id
+        )
+        if sequence_id is not None:
+            self._blocked_after_intent_sequence_id = max(
+                self._blocked_after_intent_sequence_id,
+                sequence_id,
+            )
+
+    def evaluate(
+        self,
+        desired_velocity: VelocityInput,
+        safety_intent: IntentInput,
+        *,
+        now_ns: object,
+    ) -> ArbitrationResult:
+        """Evaluate ordered control inputs and retain a fail-closed latch."""
+        checked_now_ns = _checked_now_ns(now_ns)
+        if checked_now_ns is None:
+            self._latch(None)
+            return self._zero(
+                ArbitrationReason.CURRENT_TIME_INVALID,
+                timestamp_ns=0,
+            )
+        if self._last_now_ns is not None and checked_now_ns < self._last_now_ns:
+            self._latch(None)
+            return self._zero(
+                ArbitrationReason.ARBITER_CLOCK_REGRESSION,
+                timestamp_ns=checked_now_ns,
+            )
+        self._last_now_ns = checked_now_ns
+
+        intent, intent_was_supplied = _parse_safety_intent(safety_intent)
+        if intent is None:
+            self._latch(None)
+            return self._zero(
+                (
+                    ArbitrationReason.SAFETY_INTENT_INVALID
+                    if intent_was_supplied
+                    else ArbitrationReason.SAFETY_INTENT_MISSING
+                ),
+                timestamp_ns=checked_now_ns,
+            )
+        correlation_id = intent.correlation_id
+        if (
+            self._last_intent_sequence_id is not None
+            and (
+                intent.sequence_id < self._last_intent_sequence_id
+                or (
+                    intent.sequence_id == self._last_intent_sequence_id
+                    and intent != self._last_intent
+                )
+            )
+        ):
+            self._latch(intent)
+            return self._zero(
+                ArbitrationReason.SAFETY_INTENT_SEQUENCE_REGRESSION,
+                timestamp_ns=checked_now_ns,
+                correlation_id=correlation_id,
+            )
+        self._last_intent_sequence_id = intent.sequence_id
+        self._last_intent = intent
+
+        intent_age_ns = checked_now_ns - intent.timestamp_ns
+        if intent_age_ns < 0:
+            self._latch(intent)
+            return self._zero(
+                ArbitrationReason.SAFETY_CLOCK_REGRESSION,
+                timestamp_ns=checked_now_ns,
+                correlation_id=correlation_id,
+            )
+        if intent_age_ns >= self._config.safety_stale_threshold_ns:
+            self._latch(intent)
+            return self._zero(
+                ArbitrationReason.SAFETY_INTENT_TIMEOUT,
+                timestamp_ns=checked_now_ns,
+                correlation_id=correlation_id,
+            )
+
+        stop_reason = {
+            SafetyIntentState.E_STOP: ArbitrationReason.E_STOP_ACTIVE,
+            SafetyIntentState.RECOVERY_HOLDING: ArbitrationReason.RECOVERY_HOLDING,
+        }.get(intent.state)
+        if stop_reason is not None:
+            self._latch(intent)
+            return self._zero(
+                stop_reason,
+                timestamp_ns=checked_now_ns,
+                correlation_id=correlation_id,
+            )
+
+        if intent.state is SafetyIntentState.NORMAL and self._requires_new_normal:
+            if intent.sequence_id <= self._blocked_after_intent_sequence_id:
+                return self._zero(
+                    ArbitrationReason.RECOVERY_HOLDING,
+                    timestamp_ns=checked_now_ns,
+                    correlation_id=correlation_id,
+                )
+            self._requires_new_normal = False
+            self._release_sequence_id = intent.sequence_id
+
+        velocity, velocity_was_supplied = _parse_velocity(desired_velocity)
+        if velocity is None:
+            self._latch(intent)
+            return self._zero(
+                (
+                    ArbitrationReason.COMMAND_INVALID
+                    if velocity_was_supplied
+                    else ArbitrationReason.COMMAND_MISSING
+                ),
+                timestamp_ns=checked_now_ns,
+                correlation_id=correlation_id,
+            )
+        if velocity.frame_id != self._config.output_frame_id:
+            self._latch(intent)
+            return self._zero(
+                ArbitrationReason.COMMAND_FRAME_MISMATCH,
+                timestamp_ns=checked_now_ns,
+                correlation_id=correlation_id,
+            )
+        if (
+            self._last_command_sequence_id is not None
+            and (
+                velocity.sequence_id < self._last_command_sequence_id
+                or (
+                    velocity.sequence_id == self._last_command_sequence_id
+                    and velocity != self._last_command
+                )
+            )
+        ):
+            self._latch(intent)
+            return self._zero(
+                ArbitrationReason.COMMAND_SEQUENCE_REGRESSION,
+                timestamp_ns=checked_now_ns,
+                correlation_id=correlation_id,
+            )
+        self._last_command_sequence_id = velocity.sequence_id
+        self._last_command = velocity
+
+        command_age_ns = checked_now_ns - velocity.timestamp_ns
+        if command_age_ns < 0:
+            self._latch(intent)
+            return self._zero(
+                ArbitrationReason.COMMAND_CLOCK_REGRESSION,
+                timestamp_ns=checked_now_ns,
+                correlation_id=correlation_id,
+            )
+        if command_age_ns >= self._config.command_stale_threshold_ns:
+            self._latch(intent)
+            return self._zero(
+                ArbitrationReason.COMMAND_TIMEOUT,
+                timestamp_ns=checked_now_ns,
+                correlation_id=correlation_id,
+            )
+        release_sequence_id = self._release_sequence_id
+        if (
+            release_sequence_id is not None
+            and velocity.sequence_id <= release_sequence_id
+        ):
+            return self._zero(
+                ArbitrationReason.RECOVERY_COMMAND_REQUIRED,
+                timestamp_ns=checked_now_ns,
+                correlation_id=correlation_id,
+            )
+
+        if intent.state is SafetyIntentState.WARNING:
+            return self._warning_result(
+                velocity,
+                correlation_id=correlation_id,
+            )
+
+        self._last_output = velocity
+        return ArbitrationResult(
+            command=velocity,
+            mode=ArbitrationMode.PASS_THROUGH,
+            reason=ArbitrationReason.PROCEED,
+            policy_version=self._config.policy_version,
+            correlation_id=correlation_id,
         )
