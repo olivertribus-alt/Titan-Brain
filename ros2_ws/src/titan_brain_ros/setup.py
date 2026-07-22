@@ -31,6 +31,8 @@ setup(
             "titan_brain_ros.command_path_observability_node:main",
             "actuator_feedback_monitor_node = "
             "titan_brain_ros.actuator_feedback_monitor_node:main",
+            "safety_loop_supervisor_node = "
+            "titan_brain_ros.safety_loop_supervisor_node:main",
         ],
     },
 )

@@ -19,6 +19,9 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/CommandPathObservabilityStatus.msg"
   "msg/ActuatorFeedback.msg"
   "msg/StopAcknowledgement.msg"
+  "msg/SafetyHeartbeat.msg"
+  "msg/SafetyRelayStatus.msg"
+  "msg/SafetySupervisorStatus.msg"
   DEPENDENCIES builtin_interfaces geometry_msgs std_msgs
 )
 

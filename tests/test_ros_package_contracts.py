@@ -242,6 +242,33 @@ def test_titan_brain_message_contracts_are_explicit() -> None:
         "uint64 stop_elapsed_ns",
         "uint64 evaluated_timestamp_ns",
     ]
+    assert _message_fields(messages / "SafetyHeartbeat.msg") == [
+        "std_msgs/Header header",
+        "string sender_id",
+        "uint64 sequence_number",
+        "uint32 status_code",
+    ]
+    assert _message_fields(messages / "SafetyRelayStatus.msg") == [
+        "std_msgs/Header header",
+        "uint8 COMMANDED_CLOSED=1",
+        "uint8 COMMANDED_OPEN=2",
+        "uint8 commanded_state",
+        "uint8 FEEDBACK_UNKNOWN=0",
+        "uint8 FEEDBACK_CLOSED=1",
+        "uint8 FEEDBACK_OPEN=2",
+        "uint8 feedback_state",
+        "bool is_latched",
+    ]
+    assert _message_fields(messages / "SafetySupervisorStatus.msg") == [
+        "std_msgs/Header header",
+        "uint8 STATE_INITIALIZING=0",
+        "uint8 STATE_OK=1",
+        "uint8 STATE_TRIPPED=2",
+        "uint8 STATE_HARDWARE_FAULT_LATCH=3",
+        "uint8 supervisor_state",
+        "string[] active_faults",
+        "bool relay_closed_request",
+    ]
 
 
 def test_message_package_declares_rosidl_and_message_dependencies() -> None:
@@ -269,6 +296,9 @@ def test_message_package_declares_rosidl_and_message_dependencies() -> None:
     assert '"msg/CommandPathObservabilityStatus.msg"' in cmake
     assert '"msg/ActuatorFeedback.msg"' in cmake
     assert '"msg/StopAcknowledgement.msg"' in cmake
+    assert '"msg/SafetyHeartbeat.msg"' in cmake
+    assert '"msg/SafetyRelayStatus.msg"' in cmake
+    assert '"msg/SafetySupervisorStatus.msg"' in cmake
 
 
 def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
@@ -296,6 +326,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert "titan_brain_ros.velocity_arbiter_node:main" in setup
     assert "titan_brain_ros.command_path_observability_node:main" in setup
     assert "titan_brain_ros.actuator_feedback_monitor_node:main" in setup
+    assert "titan_brain_ros.safety_loop_supervisor_node:main" in setup
     assert (package / "resource" / "titan_brain_ros").is_file()
     assert (
         package / "titan_brain_ros" / "safety_observation_node.py"
@@ -309,6 +340,9 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert (
         package / "titan_brain_ros" / "actuator_feedback_monitor_node.py"
     ).is_file()
+    assert (
+        package / "titan_brain_ros" / "safety_loop_supervisor_node.py"
+    ).is_file()
     shared_config = package / "config" / "titan_brain.yaml"
     launch_file = package / "launch" / "titan_brain.launch.py"
     e2e_test = package / "test" / "test_e2e_transport.py"
@@ -317,6 +351,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert e2e_test.is_file()
     launch_text = launch_file.read_text(encoding="utf-8")
     assert 'executable="actuator_feedback_monitor_node"' in launch_text
+    assert 'executable="safety_loop_supervisor_node"' in launch_text
     config_text = shared_config.read_text(encoding="utf-8")
     for required_parameter in (
         "target_frame",
@@ -359,6 +394,10 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
         "observation_to_command_budget_sec",
         "max_correlation_entries",
         "max_pending_per_correlation",
+        "heartbeat_timeout_sec",
+        "initialization_timeout_sec",
+        "relay_budget_sec",
+        "reset_authorization_token",
     ):
         assert f"{required_parameter}:" in config_text
     max_observation_age_sec = _float_parameter(
