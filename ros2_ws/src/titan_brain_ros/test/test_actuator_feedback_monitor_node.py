@@ -65,6 +65,20 @@ def _stopped_feedback(
     return feedback
 
 
+def _moving_feedback(
+    node: ActuatorFeedbackMonitorNode,
+    *,
+    sequence_id: int = 2,
+    correlation_id: str = "stop-ros-001",
+) -> ActuatorFeedback:
+    feedback = _stopped_feedback(node, sequence_id=sequence_id)
+    feedback.correlation_id = correlation_id
+    feedback.measured_linear_x = 0.25
+    feedback.state = ActuatorFeedback.STATE_MOVING
+    feedback.is_stopped = False
+    return feedback
+
+
 def test_qos_profiles_are_bounded_and_fail_closed() -> None:
     feedback = feedback_qos_profile()
     control = control_qos_profile()
@@ -141,6 +155,45 @@ def test_invalid_feedback_publishes_critical_latch() -> None:
         assert node.last_status.priority == (
             node.last_status.PRIORITY_CRITICAL
         )
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_spurious_movement_after_ack_publishes_critical_latch() -> None:
+    rclpy.init()
+    node = _node()
+    try:
+        node._on_arbitration_status(_stop_status(node))
+        node._on_feedback(_stopped_feedback(node, sequence_id=1))
+        node._on_feedback(_moving_feedback(node, sequence_id=2))
+
+        assert node.last_result is not None
+        assert node.last_result.reason.value == "spurious_movement_after_ack"
+        assert node.last_result.is_latched is True
+        assert node.last_status is not None
+        assert node.last_status.critical is True
+        assert node.last_status.priority == node.last_status.PRIORITY_CRITICAL
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_frozen_feedback_after_stop_request_latches_stale_fault() -> None:
+    rclpy.init()
+    node = _node()
+    try:
+        node._on_arbitration_status(_stop_status(node))
+        stale = _stopped_feedback(node)
+        stale.header.stamp.sec = 0
+        stale.header.stamp.nanosec = 1
+        node._on_feedback(stale)
+
+        assert node.last_result is not None
+        assert node.last_result.reason.value == "stale_feedback"
+        assert node.last_result.is_latched is True
+        assert node.last_status is not None
+        assert node.last_status.latched_fault is True
     finally:
         node.destroy_node()
         rclpy.shutdown()

@@ -320,7 +320,10 @@ class ActuatorFeedbackMonitorNode(Node):
     def _on_feedback(self, message: ActuatorFeedbackMsg) -> None:
         self._last_feedback = _feedback_payload(message)
         self._feedback_pending = True
-        if self._monitor.state.value != "stop_pending":
+        if self._monitor.state.value not in {
+            "stop_pending",
+            "stop_acknowledged",
+        }:
             return
         result = self._monitor.observe_feedback(
             self._last_feedback,

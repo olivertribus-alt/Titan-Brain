@@ -218,6 +218,25 @@ def test_sequence_regression_latches_replay_fault(
     assert result.reason is StopAckReason.FEEDBACK_SEQUENCE_REGRESSION
 
 
+def test_sequence_gap_latches_desynchronization_fault(
+    monitor: StopAckMonitor,
+) -> None:
+    monitor.request_stop(_request(), now_ns=100)
+    monitor.observe_feedback(
+        _feedback(sequence_id=1, measured_linear_x=0.5),
+        now_ns=110,
+    )
+
+    result = monitor.observe_feedback(
+        _feedback(sequence_id=3, timestamp_ns=120),
+        now_ns=120,
+    )
+
+    assert monitor.is_latched is True
+    assert monitor.fault_reason is StopAckReason.FEEDBACK_SEQUENCE_GAP
+    assert result.reason is StopAckReason.FEEDBACK_SEQUENCE_GAP
+
+
 def test_latch_is_sticky_against_feedback_time_and_new_request(
     monitor: StopAckMonitor,
 ) -> None:
@@ -328,7 +347,7 @@ def test_invalid_clock_on_initial_request_is_fail_closed(
     assert result.reason is StopAckReason.CLOCK_REGRESSION
 
 
-def test_acknowledged_state_is_sticky_until_new_request(
+def test_acknowledged_state_latches_on_spurious_movement(
     monitor: StopAckMonitor,
 ) -> None:
     monitor.request_stop(_request(), now_ns=100)
@@ -342,8 +361,107 @@ def test_acknowledged_state_is_sticky_until_new_request(
 
     assert acknowledgement.state is StopMonitorState.STOP_ACKNOWLEDGED
     assert after_budget.reason is StopAckReason.STOP_ACKNOWLEDGED
-    assert repeated_feedback.reason is StopAckReason.STOP_ACKNOWLEDGED
+    assert repeated_feedback.state is StopMonitorState.HARDWARE_FAULT_LATCH
+    assert repeated_feedback.reason is StopAckReason.SPURIOUS_MOVEMENT_AFTER_ACK
+    assert monitor.is_latched is True
+
+
+def test_acknowledged_state_accepts_new_stopped_feedback(
+    monitor: StopAckMonitor,
+) -> None:
+    monitor.request_stop(_request(), now_ns=100)
+    monitor.observe_feedback(_feedback(sequence_id=1), now_ns=110)
+
+    result = monitor.observe_feedback(
+        _feedback(sequence_id=2, timestamp_ns=120),
+        now_ns=120,
+    )
+
+    assert result.state is StopMonitorState.STOP_ACKNOWLEDGED
+    assert result.reason is StopAckReason.STOP_ACKNOWLEDGED
     assert monitor.is_latched is False
+
+
+def test_acknowledged_state_keeps_ack_when_feedback_is_temporarily_missing(
+    monitor: StopAckMonitor,
+) -> None:
+    monitor.request_stop(_request(), now_ns=100)
+    monitor.observe_feedback(_feedback(sequence_id=1), now_ns=110)
+
+    result = monitor.observe_feedback(None, now_ns=120)
+
+    assert result.state is StopMonitorState.STOP_ACKNOWLEDGED
+    assert result.reason is StopAckReason.STOP_ACKNOWLEDGED
+
+
+def test_acknowledged_state_latches_clock_regression(
+    monitor: StopAckMonitor,
+) -> None:
+    monitor.request_stop(_request(), now_ns=100)
+    monitor.observe_feedback(_feedback(sequence_id=1), now_ns=110)
+
+    result = monitor.observe_feedback(_feedback(sequence_id=2), now_ns=109)
+
+    assert result.state is StopMonitorState.HARDWARE_FAULT_LATCH
+    assert result.reason is StopAckReason.CLOCK_REGRESSION
+
+
+@pytest.mark.parametrize(
+    ("feedback", "expected_reason"),
+    [
+        (
+            _feedback(correlation_id="other-stop", sequence_id=2),
+            StopAckReason.FEEDBACK_CORRELATION_MISMATCH,
+        ),
+        (
+            _feedback(sequence_id=1, timestamp_ns=120),
+            StopAckReason.FEEDBACK_SEQUENCE_REGRESSION,
+        ),
+        (
+            _feedback(sequence_id=2, timestamp_ns=99),
+            StopAckReason.FEEDBACK_BEFORE_STOP_REQUEST,
+        ),
+        (_feedback(sequence_id=2, timestamp_ns=110), StopAckReason.STALE_FEEDBACK),
+    ],
+)
+def test_acknowledged_state_latches_on_faulty_follow_up_feedback(
+    monitor: StopAckMonitor,
+    feedback: ActuatorFeedback,
+    expected_reason: StopAckReason,
+) -> None:
+    monitor.request_stop(_request(), now_ns=100)
+    monitor.observe_feedback(_feedback(sequence_id=1), now_ns=110)
+
+    result = monitor.observe_feedback(
+        feedback,
+        now_ns=(
+            160 if expected_reason is StopAckReason.STALE_FEEDBACK else 120
+        ),
+    )
+
+    assert result.state is StopMonitorState.HARDWARE_FAULT_LATCH
+    assert result.reason is expected_reason
+    assert monitor.is_latched is True
+
+
+def test_acknowledged_state_latches_on_non_finite_follow_up_feedback(
+    monitor: StopAckMonitor,
+) -> None:
+    monitor.request_stop(_request(), now_ns=100)
+    monitor.observe_feedback(_feedback(sequence_id=1), now_ns=110)
+    feedback = ActuatorFeedback.model_construct(
+        measured_linear_x=float("nan"),
+        measured_linear_y=0.0,
+        measured_angular_z=0.0,
+        correlation_id="stop-001",
+        sequence_id=2,
+        timestamp_ns=120,
+    )
+
+    result = monitor.observe_feedback(feedback, now_ns=120)
+
+    assert result.state is StopMonitorState.HARDWARE_FAULT_LATCH
+    assert result.reason is StopAckReason.INVALID_FEEDBACK
 
 
 def test_new_request_resets_acknowledgement_and_can_ack_again(

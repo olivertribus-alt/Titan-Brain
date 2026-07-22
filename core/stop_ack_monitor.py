@@ -48,6 +48,8 @@ class StopAckReason(StrEnum):
     FEEDBACK_BEFORE_STOP_REQUEST = "feedback_before_stop_request"
     FEEDBACK_CORRELATION_MISMATCH = "feedback_correlation_mismatch"
     FEEDBACK_SEQUENCE_REGRESSION = "feedback_sequence_regression"
+    FEEDBACK_SEQUENCE_GAP = "feedback_sequence_gap"
+    SPURIOUS_MOVEMENT_AFTER_ACK = "spurious_movement_after_ack"
     STOP_TIMEOUT = "stop_timeout"
     CLOCK_REGRESSION = "clock_regression"
     HARDWARE_FAULT_LATCHED = "hardware_fault_latched"
@@ -231,8 +233,9 @@ class StopAckMonitor:
     Invalid or stale feedback received during a pending stop immediately
     latches a hardware fault.  A moving but valid actuator remains pending until
     the stop budget expires, at which point it is latched as a timeout.  The
-    latch is never cleared by feedback or time passing; only ``reset_fault``
-    accepts an explicit reset protocol.
+    latch is never cleared by feedback or time passing; movement observed after
+    an acknowledgement is treated as spurious motion and latched immediately.
+    Only ``reset_fault`` accepts an explicit reset protocol.
     """
 
     def __init__(self, config: StopMonitorConfig) -> None:
@@ -344,6 +347,17 @@ class StopAckMonitor:
             return self._latch(StopAckReason.STOP_TIMEOUT, timestamp_ns=timestamp_ns)
         return self._result(reason, timestamp_ns=timestamp_ns)
 
+    def _sequence_fault_reason(self, sequence_id: int) -> StopAckReason | None:
+        """Reject replay and forward gaps at the actuator feedback boundary."""
+        previous = self._last_feedback_sequence_id
+        if previous is None:
+            return None
+        if sequence_id <= previous:
+            return StopAckReason.FEEDBACK_SEQUENCE_REGRESSION
+        if sequence_id != previous + 1:
+            return StopAckReason.FEEDBACK_SEQUENCE_GAP
+        return None
+
     def request_stop(
         self,
         request: StopRequestInput,
@@ -394,10 +408,7 @@ class StopAckMonitor:
         if self.is_latched:
             return self._latched_result()
         if self._state is StopMonitorState.STOP_ACKNOWLEDGED:
-            return self._result(
-                StopAckReason.STOP_ACKNOWLEDGED,
-                timestamp_ns=self._last_now_ns or 0,
-            )
+            return self._observe_acknowledged_feedback(feedback, now_ns=now_ns)
         if self._request is None:
             checked_now = _checked_now_ns(now_ns) or 0
             return self._result(
@@ -449,12 +460,10 @@ class StopAckMonitor:
                 StopAckReason.FEEDBACK_BEFORE_STOP_REQUEST,
                 timestamp_ns=checked_feedback_now,
             )
-        if (
-            self._last_feedback_sequence_id is not None
-            and parsed_feedback.sequence_id <= self._last_feedback_sequence_id
-        ):
+        sequence_fault = self._sequence_fault_reason(parsed_feedback.sequence_id)
+        if sequence_fault is not None:
             return self._latch(
-                StopAckReason.FEEDBACK_SEQUENCE_REGRESSION,
+                sequence_fault,
                 timestamp_ns=checked_feedback_now,
             )
         self._last_feedback_sequence_id = parsed_feedback.sequence_id
@@ -478,6 +487,89 @@ class StopAckMonitor:
 
         return self._pending_result(
             StopAckReason.FEEDBACK_MOVING,
+            timestamp_ns=checked_feedback_now,
+        )
+
+    def _observe_acknowledged_feedback(
+        self,
+        feedback: FeedbackInput,
+        *,
+        now_ns: object,
+    ) -> StopMonitorResult:
+        """Continue validating feedback after a stop acknowledgement.
+
+        Acknowledgement is not permission to stop monitoring the actuator.  A
+        fresh moving sample after the acknowledged stop is evidence of
+        uncommanded motion and therefore enters the sticky hardware-fault
+        latch.  Replayed, stale, desynchronised, or malformed samples are
+        treated as faults as well.
+        """
+        if feedback is None:
+            return self._result(
+                StopAckReason.STOP_ACKNOWLEDGED,
+                timestamp_ns=self._last_now_ns or 0,
+            )
+
+        request = self._request
+        if request is None:  # pragma: no cover - acknowledgement requires one
+            return self._result(
+                StopAckReason.NO_STOP_REQUEST,
+                timestamp_ns=self._last_now_ns or 0,
+            )
+
+        checked_feedback_now = self._clock_checked(now_ns)
+        if checked_feedback_now is None:
+            return self._result(
+                StopAckReason.CLOCK_REGRESSION,
+                timestamp_ns=self._last_now_ns or 0,
+            )
+
+        status = evaluate_actuator_feedback(
+            feedback,
+            now_ns=checked_feedback_now,
+            expected_correlation_id=request.correlation_id,
+            config=self._config.feedback_config,
+        )
+        if status.state is ActuatorState.STALE_DATA:
+            return self._latch(
+                StopAckReason.STALE_FEEDBACK,
+                timestamp_ns=checked_feedback_now,
+            )
+        if status.state is ActuatorState.INVALID_DATA:
+            if _extract_correlation(feedback) not in {
+                None,
+                request.correlation_id,
+            }:
+                reason = StopAckReason.FEEDBACK_CORRELATION_MISMATCH
+            else:
+                reason = StopAckReason.INVALID_FEEDBACK
+            return self._latch(reason, timestamp_ns=checked_feedback_now)
+
+        parsed_feedback = (
+            feedback
+            if isinstance(feedback, ActuatorFeedback)
+            else ActuatorFeedback.model_validate(feedback)
+        )
+        if parsed_feedback.timestamp_ns < request.requested_timestamp_ns:
+            return self._latch(
+                StopAckReason.FEEDBACK_BEFORE_STOP_REQUEST,
+                timestamp_ns=checked_feedback_now,
+            )
+        sequence_fault = self._sequence_fault_reason(parsed_feedback.sequence_id)
+        if sequence_fault is not None:
+            return self._latch(
+                sequence_fault,
+                timestamp_ns=checked_feedback_now,
+            )
+        self._last_feedback_sequence_id = parsed_feedback.sequence_id
+
+        if status.state is ActuatorState.MOVING:
+            return self._latch(
+                StopAckReason.SPURIOUS_MOVEMENT_AFTER_ACK,
+                timestamp_ns=checked_feedback_now,
+            )
+        return self._result(
+            StopAckReason.STOP_ACKNOWLEDGED,
             timestamp_ns=checked_feedback_now,
         )
 
