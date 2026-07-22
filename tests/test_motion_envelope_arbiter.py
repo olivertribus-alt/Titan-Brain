@@ -441,3 +441,21 @@ def test_current_invalid_envelope_overrides_recovery_holding(
 
     _assert_zero(ArbitrationReason.MOTION_ENVELOPE_INVALID, result)
     assert arbiter.recovery_latched is True
+
+
+def test_explicit_recovery_intent_keeps_authoritative_reason(
+    arbiter: DynamicSafetyCommandArbiter,
+) -> None:
+    """An explicit holding intent outranks envelope diagnostics."""
+    result = arbiter.evaluate_with_envelope(
+        _command(),
+        _intent(
+            SafetyIntentState.RECOVERY_HOLDING,
+            sequence_id=2,
+            correlation_id="decision-holding",
+        ),
+        _envelope(),
+        now_ns=NOW_NS,
+    )
+
+    _assert_zero(ArbitrationReason.RECOVERY_HOLDING, result)

@@ -636,7 +636,10 @@ class DynamicSafetyCommandArbiter:
         the latch.
         """
         intent, _ = _parse_safety_intent(safety_intent)
-        if intent is None:
+        # An explicit RECOVERY_HOLDING intent is itself authoritative.  Only
+        # a recovery latch attached to a NORMAL intent may be reclassified by
+        # a more specific current-envelope audit reason.
+        if intent is None or intent.state is not SafetyIntentState.NORMAL:
             return None
 
         envelope, envelope_was_supplied = _parse_motion_envelope(
