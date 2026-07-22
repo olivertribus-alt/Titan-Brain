@@ -371,6 +371,14 @@ def main(args: list[str] | None = None) -> None:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
+    except RuntimeError as error:
+        # During launch shutdown, rclpy can race a queued DDS conversion with
+        # destruction of the subscription's native message storage.  This
+        # node is observability-only, so the conversion race must not turn a
+        # clean SIGINT shutdown into a failed process exit.  Other runtime
+        # errors remain actionable and are re-raised.
+        if "Unable to convert call argument" not in str(error):
+            raise
     finally:
         if node is not None:
             node.destroy_node()
