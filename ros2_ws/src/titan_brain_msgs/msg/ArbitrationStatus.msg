@@ -11,6 +11,13 @@ string correlation_id
 bool is_safe
 uint64 command_sequence_id
 uint64 safety_intent_sequence_id
+string arbitration_latency_status
+bool arbitration_timing_valid
+bool arbitration_within_budget
+uint64 intent_received_timestamp_ns
+uint64 command_published_timestamp_ns
+uint64 arbitration_latency_ns
+uint64 arbitration_latency_budget_ns
 float64 max_abs_linear_x
 float64 max_abs_linear_y
 float64 max_abs_angular_z

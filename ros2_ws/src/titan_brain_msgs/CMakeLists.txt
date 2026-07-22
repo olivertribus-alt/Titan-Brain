@@ -15,6 +15,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/EvaluatorObservabilityStatus.msg"
   "msg/SafetyIntent.msg"
   "msg/ArbitrationStatus.msg"
+  "msg/CommandPathObservabilityStatus.msg"
   DEPENDENCIES builtin_interfaces geometry_msgs std_msgs
 )
 

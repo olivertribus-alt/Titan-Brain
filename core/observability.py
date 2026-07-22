@@ -92,6 +92,10 @@ class EvaluationObservabilityReport(StrictFrozenModel):
     decision_id: str | None = None
     outcome: EvaluationOutcome
     latency_status: LatencyStatus
+    observation_timestamp_ns: int | None = Field(default=None, ge=0)
+    received_timestamp_ns: int | None = Field(default=None, ge=0)
+    decision_timestamp_ns: int | None = Field(default=None, ge=0)
+    published_timestamp_ns: int | None = Field(default=None, ge=0)
     observation_to_receive_ns: int | None = Field(default=None, ge=0)
     receive_to_decision_ns: int | None = Field(default=None, ge=0)
     decision_to_publish_ns: int | None = Field(default=None, ge=0)
@@ -122,15 +126,46 @@ class EvaluationObservabilityReport(StrictFrozenModel):
             self.decision_to_publish_ns,
             self.end_to_end_ns,
         )
+        timestamps = (
+            self.observation_timestamp_ns,
+            self.received_timestamp_ns,
+            self.decision_timestamp_ns,
+            self.published_timestamp_ns,
+        )
         if self.timing_valid:
-            if any(value is None for value in latencies) or self.detail is not None:
-                raise ValueError("valid timing requires all latencies and no detail")
+            if (
+                any(value is None for value in latencies + timestamps)
+                or self.detail is not None
+            ):
+                raise ValueError(
+                    "valid timing requires all timestamps, latencies, and no detail"
+                )
+            observation_ns, received_ns, decided_ns, published_ns = timestamps
+            assert observation_ns is not None
+            assert received_ns is not None
+            assert decided_ns is not None
+            assert published_ns is not None
+            expected_latencies = (
+                received_ns - observation_ns,
+                decided_ns - received_ns,
+                published_ns - decided_ns,
+                published_ns - observation_ns,
+            )
+            if expected_latencies != latencies or any(
+                value < 0 for value in expected_latencies
+            ):
+                raise ValueError("latencies must match monotonic timestamps")
             if self.within_budget and self.exceeded_budgets:
                 raise ValueError("within-budget timing cannot name exceeded budgets")
             if not self.within_budget and not self.exceeded_budgets:
                 raise ValueError("budget failure must name an exceeded budget")
-        elif any(value is not None for value in latencies) or self.detail is None:
-            raise ValueError("invalid timing requires detail and no latencies")
+        elif (
+            any(value is not None for value in latencies + timestamps)
+            or self.detail is None
+        ):
+            raise ValueError(
+                "invalid timing requires detail and no timestamps or latencies"
+            )
         return self
 
 
@@ -313,6 +348,10 @@ class EvaluatorObservability:
             decision_id=decision_id,
             outcome=outcome,
             latency_status=latency_status,
+            observation_timestamp_ns=(checked[0] if latencies[0] is not None else None),
+            received_timestamp_ns=(checked[1] if latencies[0] is not None else None),
+            decision_timestamp_ns=(checked[2] if latencies[0] is not None else None),
+            published_timestamp_ns=(checked[3] if latencies[0] is not None else None),
             observation_to_receive_ns=latencies[0],
             receive_to_decision_ns=latencies[1],
             decision_to_publish_ns=latencies[2],
