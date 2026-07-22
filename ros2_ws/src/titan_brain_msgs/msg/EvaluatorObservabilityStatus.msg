@@ -1,0 +1,23 @@
+# Audit-correlated latency and counter snapshot for TB-OBS-004.
+std_msgs/Header header
+string schema_version
+string policy_version
+string correlation_id
+string decision_id
+string outcome
+string latency_status
+bool timing_valid
+bool within_budget
+uint64 observation_to_receive_ns
+uint64 receive_to_decision_ns
+uint64 decision_to_publish_ns
+uint64 end_to_end_ns
+string[] exceeded_budgets
+string detail
+uint64 total_count
+uint64 normal_count
+uint64 warning_count
+uint64 e_stop_count
+uint64 rejected_count
+uint64 budget_exceeded_count
+uint64 invalid_timing_count
