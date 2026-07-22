@@ -17,6 +17,7 @@ from geometry_msgs.msg import Twist
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from rclpy.exceptions import RCLError
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import (
@@ -43,6 +44,16 @@ _SCENARIO_TIMEOUT_SEC = 5.0
 _DRIVER_POLL_PERIOD_SEC = 0.005
 _INPUT_STREAM_PERIOD_NS = 20_000_000
 _CI_STOP_DEADLINE_NS = 250_000_000
+
+
+def _shutdown_rclpy() -> None:
+    """Make the DDS driver teardown idempotent under launch_testing."""
+    if not rclpy.ok():
+        return
+    try:
+        rclpy.shutdown()
+    except RCLError:
+        return
 
 
 @pytest.mark.launch_test
@@ -182,7 +193,7 @@ class TestTitanBrainTransport(unittest.TestCase):
         if cls.executor_thread.is_alive():
             raise RuntimeError("E2E test executor did not shut down cleanly")
         cls.node.destroy_node()
-        rclpy.shutdown()
+        _shutdown_rclpy()
 
     @classmethod
     def _on_cmd_vel(cls, message: Twist) -> None:

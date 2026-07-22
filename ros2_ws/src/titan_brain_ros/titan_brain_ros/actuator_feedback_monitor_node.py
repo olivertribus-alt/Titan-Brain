@@ -7,6 +7,7 @@ from collections.abc import Mapping
 
 import rclpy
 from geometry_msgs.msg import Twist
+from rclpy.exceptions import RCLError
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import (
@@ -167,6 +168,18 @@ def _state_code(result: StopMonitorResult) -> int:
             StopAcknowledgementMsg.STATE_HARDWARE_FAULT_LATCH
         ),
     }[result.state.value]
+
+
+def _shutdown_rclpy() -> None:
+    """Shut down the global ROS context without turning teardown into a fault."""
+    if not rclpy.ok():
+        return
+    try:
+        rclpy.shutdown()
+    except RCLError:
+        # launch_testing may already have shut down the shared context while
+        # this process is unwinding its own finally block.
+        return
 
 
 class ActuatorFeedbackMonitorNode(Node):
@@ -414,7 +427,7 @@ def main() -> None:
         rclpy.spin(node)
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        _shutdown_rclpy()
 
 
 __all__ = [
