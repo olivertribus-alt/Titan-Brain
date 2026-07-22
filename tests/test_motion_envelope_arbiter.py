@@ -385,3 +385,59 @@ def test_envelope_timeout_latches_recovery_until_new_normal_intent(
         now_ns=NOW_NS,
     )
     assert released.reason is ArbitrationReason.PROCEED
+
+
+def test_current_envelope_command_guard_overrides_recovery_reason(
+    arbiter: DynamicSafetyCommandArbiter,
+) -> None:
+    """Keep the latch closed while reporting the envelope-specific fault."""
+    arbiter.evaluate(
+        _command(sequence_id=5),
+        _intent(SafetyIntentState.E_STOP),
+        now_ns=NOW_NS,
+    )
+
+    result = arbiter.evaluate_with_envelope(
+        _command(sequence_id=6),
+        _intent(sequence_id=10, correlation_id="decision-010"),
+        _envelope(
+            sequence_id=10,
+            correlation_id="decision-010",
+            ingress_sequence_id=6,
+        ),
+        now_ns=NOW_NS,
+    )
+
+    _assert_zero(ArbitrationReason.MOTION_ENVELOPE_COMMAND_REQUIRED, result)
+    assert arbiter.recovery_latched is False
+
+
+def test_current_invalid_envelope_overrides_recovery_holding(
+    arbiter: DynamicSafetyCommandArbiter,
+) -> None:
+    """An invalid current envelope must not be hidden by the recovery latch."""
+    initial = arbiter.evaluate_with_envelope(
+        _command(sequence_id=2),
+        _intent(),
+        _envelope(),
+        now_ns=NOW_NS,
+    )
+    assert initial.reason is ArbitrationReason.PROCEED
+
+    timed_out = arbiter.evaluate_with_envelope(
+        _command(sequence_id=3),
+        _intent(),
+        _envelope(timestamp_ns=NOW_NS - 50),
+        now_ns=NOW_NS,
+    )
+    _assert_zero(ArbitrationReason.MOTION_ENVELOPE_TIMEOUT, timed_out)
+
+    result = arbiter.evaluate_with_envelope(
+        _command(sequence_id=4),
+        _intent(),
+        {"source_sequence_regression": 6},
+        now_ns=NOW_NS,
+    )
+
+    _assert_zero(ArbitrationReason.MOTION_ENVELOPE_INVALID, result)
+    assert arbiter.recovery_latched is True

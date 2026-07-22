@@ -619,6 +619,62 @@ class DynamicSafetyCommandArbiter:
             correlation_id=correlation_id,
         )
 
+    def _envelope_reason_for_recovery(
+        self,
+        desired_velocity: VelocityInput,
+        safety_intent: IntentInput,
+        motion_envelope: EnvelopeInput,
+        *,
+        now_ns: int,
+    ) -> ArbitrationReason | None:
+        """Return a current envelope fault that explains a recovery stop.
+
+        ``evaluate`` remains the authority for the recovery latch and all
+        safety-intent checks.  When it has already forced zero for a generic
+        recovery reason, this secondary inspection gives a simultaneously
+        invalid envelope its more actionable audit reason without releasing
+        the latch.
+        """
+        intent, _ = _parse_safety_intent(safety_intent)
+        if intent is None:
+            return None
+
+        envelope, envelope_was_supplied = _parse_motion_envelope(
+            motion_envelope
+        )
+        if envelope is None:
+            return (
+                ArbitrationReason.MOTION_ENVELOPE_INVALID
+                if envelope_was_supplied
+                else ArbitrationReason.MOTION_ENVELOPE_MISSING
+            )
+        if envelope.frame_id != self._config.output_frame_id:
+            return ArbitrationReason.MOTION_ENVELOPE_FRAME_MISMATCH
+
+        source_sequence_id = (
+            intent.source_sequence_id
+            if intent.source_sequence_id is not None
+            else intent.sequence_id
+        )
+        if (
+            envelope.correlation_id != intent.correlation_id
+            or envelope.sequence_id != source_sequence_id
+        ):
+            return ArbitrationReason.MOTION_ENVELOPE_INTENT_MISMATCH
+
+        envelope_age_ns = now_ns - envelope.timestamp_ns
+        if envelope_age_ns < 0:
+            return ArbitrationReason.MOTION_ENVELOPE_CLOCK_REGRESSION
+        if envelope_age_ns >= self._config.motion_envelope_stale_threshold_ns:
+            return ArbitrationReason.MOTION_ENVELOPE_TIMEOUT
+
+        velocity, _ = _parse_velocity(desired_velocity)
+        if velocity is not None and (
+            velocity.sequence_id <= envelope.ingress_sequence_id
+        ):
+            return ArbitrationReason.MOTION_ENVELOPE_COMMAND_REQUIRED
+        return None
+
     def _latch(self, intent: SafetyIntent | None) -> None:
         self._requires_new_normal = True
         self._release_sequence_id = None
@@ -819,6 +875,24 @@ class DynamicSafetyCommandArbiter:
             now_ns=now_ns,
         )
         if result.mode is ArbitrationMode.FORCED_ZERO:
+            if result.reason in {
+                ArbitrationReason.RECOVERY_HOLDING,
+                ArbitrationReason.RECOVERY_COMMAND_REQUIRED,
+            }:
+                checked_now_ns = _checked_now_ns(now_ns)
+                if checked_now_ns is not None:
+                    envelope_reason = self._envelope_reason_for_recovery(
+                        desired_velocity,
+                        safety_intent,
+                        motion_envelope,
+                        now_ns=checked_now_ns,
+                    )
+                    if envelope_reason is not None:
+                        return self._zero(
+                            envelope_reason,
+                            timestamp_ns=result.command.timestamp_ns,
+                            correlation_id=result.correlation_id,
+                        )
             return result
 
         # ``evaluate`` can only produce a non-zero result for a valid intent;
