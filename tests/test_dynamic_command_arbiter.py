@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from core.arbitrator import (
     ArbitrationMode,
@@ -28,6 +29,9 @@ def config() -> VelocityArbiterConfig:
         max_abs_linear_x=0.8,
         max_abs_linear_y=0.2,
         max_abs_angular_z=1.5,
+        warning_max_abs_linear_x=0.3,
+        warning_max_abs_linear_y=0.1,
+        warning_max_abs_angular_z=0.4,
     )
 
 
@@ -56,11 +60,14 @@ def _command(
     sequence_id: int = 2,
     timestamp_ns: int = NOW_NS,
     frame_id: str = "base_link",
+    linear_x: float = 0.4,
+    linear_y: float = -0.1,
+    angular_z: float = 0.5,
 ) -> DesiredVelocity:
     return DesiredVelocity(
-        linear_x=0.4,
-        linear_y=-0.1,
-        angular_z=0.5,
+        linear_x=linear_x,
+        linear_y=linear_y,
+        angular_z=angular_z,
         timestamp_ns=timestamp_ns,
         frame_id=frame_id,
         sequence_id=sequence_id,
@@ -100,7 +107,6 @@ def test_initial_fresh_normal_requires_and_accepts_post_intent_command(
     [
         (SafetyIntentState.E_STOP, ArbitrationReason.E_STOP_ACTIVE),
         (SafetyIntentState.RECOVERY_HOLDING, ArbitrationReason.RECOVERY_HOLDING),
-        (SafetyIntentState.WARNING, ArbitrationReason.WARNING_TEMPORARY_ZERO),
     ],
 )
 def test_every_non_normal_intent_forces_zero_and_preserves_correlation(
@@ -116,6 +122,182 @@ def test_every_non_normal_intent_forces_zero_and_preserves_correlation(
 
     _assert_zero(result, reason, correlation_id="eval_trace_001")
     assert arbiter.recovery_latched is True
+
+
+def test_initial_warning_cannot_accelerate_from_zero(
+    arbiter: DynamicSafetyCommandArbiter,
+) -> None:
+    result = arbiter.evaluate(
+        _command(),
+        _intent(SafetyIntentState.WARNING),
+        now_ns=NOW_NS,
+    )
+
+    assert result.mode is ArbitrationMode.CLAMPED
+    assert result.reason is ArbitrationReason.WARNING_SHAPED
+    assert result.command.linear_x == 0.0
+    assert result.command.linear_y == 0.0
+    assert result.command.angular_z == 0.0
+    assert result.correlation_id == "eval_trace_001"
+    assert arbiter.recovery_latched is True
+
+
+def test_warning_applies_independent_symmetric_limits_for_both_signs(
+    arbiter: DynamicSafetyCommandArbiter,
+) -> None:
+    arbiter.evaluate(
+        _command(
+            sequence_id=2,
+            linear_x=0.8,
+            linear_y=-0.2,
+            angular_z=0.9,
+        ),
+        _intent(sequence_id=1),
+        now_ns=NOW_NS,
+    )
+    positive = arbiter.evaluate(
+        _command(
+            sequence_id=4,
+            linear_x=2.0,
+            linear_y=-2.0,
+            angular_z=2.0,
+        ),
+        _intent(SafetyIntentState.WARNING, sequence_id=3),
+        now_ns=NOW_NS,
+    )
+    negative = arbiter.evaluate(
+        _command(
+            sequence_id=6,
+            linear_x=-2.0,
+            linear_y=2.0,
+            angular_z=-2.0,
+        ),
+        _intent(SafetyIntentState.WARNING, sequence_id=5),
+        now_ns=NOW_NS,
+    )
+
+    assert positive.reason is ArbitrationReason.WARNING_SHAPED
+    assert positive.mode is ArbitrationMode.CLAMPED
+    assert positive.command.linear_x == 0.3
+    assert positive.command.linear_y == -0.1
+    assert positive.command.angular_z == 0.4
+    assert negative.command.linear_x == -0.3
+    assert negative.command.linear_y == 0.1
+    assert negative.command.angular_z == -0.4
+
+
+def test_warning_deceleration_passes_but_acceleration_is_guarded(
+    arbiter: DynamicSafetyCommandArbiter,
+) -> None:
+    arbiter.evaluate(
+        _command(
+            sequence_id=2,
+            linear_x=0.2,
+            linear_y=-0.05,
+            angular_z=0.3,
+        ),
+        _intent(sequence_id=1),
+        now_ns=NOW_NS,
+    )
+    accelerated = arbiter.evaluate(
+        _command(
+            sequence_id=4,
+            linear_x=0.25,
+            linear_y=-0.08,
+            angular_z=0.35,
+        ),
+        _intent(SafetyIntentState.WARNING, sequence_id=3),
+        now_ns=NOW_NS,
+    )
+    decelerated = arbiter.evaluate(
+        _command(
+            sequence_id=6,
+            linear_x=0.1,
+            linear_y=-0.02,
+            angular_z=0.2,
+        ),
+        _intent(SafetyIntentState.WARNING, sequence_id=5),
+        now_ns=NOW_NS,
+    )
+
+    assert accelerated.reason is ArbitrationReason.WARNING_SHAPED
+    assert accelerated.command.linear_x == 0.2
+    assert accelerated.command.linear_y == -0.05
+    assert accelerated.command.angular_z == 0.3
+    assert decelerated.reason is ArbitrationReason.WARNING_UNMODIFIED
+    assert decelerated.mode is ArbitrationMode.PASS_THROUGH
+    assert decelerated.command.linear_x == 0.1
+    assert decelerated.command.linear_y == -0.02
+    assert decelerated.command.angular_z == 0.2
+    assert arbiter.last_output == decelerated.command
+
+
+def test_warning_direction_change_preserves_requested_sign_without_acceleration(
+    arbiter: DynamicSafetyCommandArbiter,
+) -> None:
+    arbiter.evaluate(
+        _command(
+            sequence_id=2,
+            linear_x=0.2,
+            linear_y=-0.05,
+            angular_z=0.3,
+        ),
+        _intent(sequence_id=1),
+        now_ns=NOW_NS,
+    )
+
+    reversed_result = arbiter.evaluate(
+        _command(
+            sequence_id=4,
+            linear_x=-0.25,
+            linear_y=0.08,
+            angular_z=-0.35,
+        ),
+        _intent(SafetyIntentState.WARNING, sequence_id=3),
+        now_ns=NOW_NS,
+    )
+
+    assert reversed_result.command.linear_x == -0.2
+    assert reversed_result.command.linear_y == 0.05
+    assert reversed_result.command.angular_z == -0.3
+
+
+def test_warning_limits_fall_back_to_legacy_clamp_limits(
+    config: VelocityArbiterConfig,
+) -> None:
+    fallback_config = config.model_copy(
+        update={
+            "warning_max_abs_linear_x": None,
+            "warning_max_abs_linear_y": None,
+            "warning_max_abs_angular_z": None,
+        }
+    )
+    arbiter = DynamicSafetyCommandArbiter(fallback_config)
+    arbiter.evaluate(
+        _command(
+            sequence_id=2,
+            linear_x=2.0,
+            linear_y=2.0,
+            angular_z=2.0,
+        ),
+        _intent(sequence_id=1),
+        now_ns=NOW_NS,
+    )
+
+    result = arbiter.evaluate(
+        _command(
+            sequence_id=4,
+            linear_x=-2.0,
+            linear_y=-2.0,
+            angular_z=-2.0,
+        ),
+        _intent(SafetyIntentState.WARNING, sequence_id=3),
+        now_ns=NOW_NS,
+    )
+
+    assert result.command.linear_x == -0.8
+    assert result.command.linear_y == -0.2
+    assert result.command.angular_z == -1.5
 
 
 def test_recovery_rejects_command_received_before_new_normal_intent(
@@ -163,7 +345,7 @@ def test_same_normal_intent_cannot_release_latch_after_stop(
 
     _assert_zero(
         blocked,
-        ArbitrationReason.RECOVERY_HOLDING,
+        ArbitrationReason.SAFETY_INTENT_SEQUENCE_REGRESSION,
         correlation_id="eval_trace_001",
     )
 
@@ -401,6 +583,43 @@ def test_intent_and_command_sequence_regressions_fail_closed(
     )
 
 
+def test_same_sequence_cannot_replace_intent_or_command_payload(
+    arbiter: DynamicSafetyCommandArbiter,
+) -> None:
+    arbiter.evaluate(_command(sequence_id=2), _intent(sequence_id=1), now_ns=NOW_NS)
+    changed_intent = arbiter.evaluate(
+        _command(sequence_id=3),
+        _intent(
+            SafetyIntentState.WARNING,
+            sequence_id=1,
+        ),
+        now_ns=NOW_NS,
+    )
+
+    command_arbiter = DynamicSafetyCommandArbiter(arbiter.config)
+    command_arbiter.evaluate(
+        _command(sequence_id=2),
+        _intent(sequence_id=1),
+        now_ns=NOW_NS,
+    )
+    changed_command = command_arbiter.evaluate(
+        _command(sequence_id=2, linear_x=0.3),
+        _intent(sequence_id=1),
+        now_ns=NOW_NS,
+    )
+
+    _assert_zero(
+        changed_intent,
+        ArbitrationReason.SAFETY_INTENT_SEQUENCE_REGRESSION,
+        correlation_id="eval_trace_001",
+    )
+    _assert_zero(
+        changed_command,
+        ArbitrationReason.COMMAND_SEQUENCE_REGRESSION,
+        correlation_id="eval_trace_001",
+    )
+
+
 @pytest.mark.parametrize(
     ("command", "reason"),
     [
@@ -442,3 +661,15 @@ def test_exact_string_intent_state_is_accepted() -> None:
     )
 
     assert result.mode is ArbitrationMode.PASS_THROUGH
+
+
+def test_warning_limits_cannot_exceed_nominal_limits(
+    config: VelocityArbiterConfig,
+) -> None:
+    with pytest.raises(ValidationError, match="must not exceed nominal"):
+        VelocityArbiterConfig.model_validate(
+            {
+                **config.model_dump(mode="python"),
+                "warning_max_abs_linear_x": config.max_abs_linear_x + 0.1,
+            }
+        )
