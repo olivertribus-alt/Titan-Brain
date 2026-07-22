@@ -204,6 +204,44 @@ def test_titan_brain_message_contracts_are_explicit() -> None:
         "string[] exceeded_budgets",
         "string detail",
     ]
+    assert _message_fields(messages / "ActuatorFeedback.msg") == [
+        "uint8 STATE_STOPPED=0",
+        "uint8 STATE_MOVING=1",
+        "uint8 STATE_INVALID_DATA=2",
+        "uint8 STATE_STALE_DATA=3",
+        "std_msgs/Header header",
+        "string schema_version",
+        "string correlation_id",
+        "uint64 sequence_id",
+        "float64 measured_linear_x",
+        "float64 measured_linear_y",
+        "float64 measured_angular_z",
+        "uint8 state",
+        "bool is_stopped",
+        "bool is_fresh",
+        "bool is_valid",
+    ]
+    assert _message_fields(messages / "StopAcknowledgement.msg") == [
+        "uint8 STATE_IDLE=0",
+        "uint8 STATE_STOP_PENDING=1",
+        "uint8 STATE_STOP_ACKNOWLEDGED=2",
+        "uint8 STATE_HARDWARE_FAULT_LATCH=3",
+        "uint8 PRIORITY_NORMAL=0",
+        "uint8 PRIORITY_CRITICAL=255",
+        "std_msgs/Header header",
+        "string schema_version",
+        "uint8 state",
+        "string reason",
+        "string correlation_id",
+        "uint64 request_sequence_id",
+        "uint64 feedback_sequence_id",
+        "bool is_stopped",
+        "bool latched_fault",
+        "bool critical",
+        "uint8 priority",
+        "uint64 stop_elapsed_ns",
+        "uint64 evaluated_timestamp_ns",
+    ]
 
 
 def test_message_package_declares_rosidl_and_message_dependencies() -> None:
@@ -229,6 +267,8 @@ def test_message_package_declares_rosidl_and_message_dependencies() -> None:
     assert '"msg/PermittedMotionEnvelope.msg"' in cmake
     assert '"msg/ArbitrationStatus.msg"' in cmake
     assert '"msg/CommandPathObservabilityStatus.msg"' in cmake
+    assert '"msg/ActuatorFeedback.msg"' in cmake
+    assert '"msg/StopAcknowledgement.msg"' in cmake
 
 
 def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
@@ -255,6 +295,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     )
     assert "titan_brain_ros.velocity_arbiter_node:main" in setup
     assert "titan_brain_ros.command_path_observability_node:main" in setup
+    assert "titan_brain_ros.actuator_feedback_monitor_node:main" in setup
     assert (package / "resource" / "titan_brain_ros").is_file()
     assert (
         package / "titan_brain_ros" / "safety_observation_node.py"
@@ -265,12 +306,17 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert (
         package / "titan_brain_ros" / "command_path_observability_node.py"
     ).is_file()
+    assert (
+        package / "titan_brain_ros" / "actuator_feedback_monitor_node.py"
+    ).is_file()
     shared_config = package / "config" / "titan_brain.yaml"
     launch_file = package / "launch" / "titan_brain.launch.py"
     e2e_test = package / "test" / "test_e2e_transport.py"
     assert shared_config.is_file()
     assert launch_file.is_file()
     assert e2e_test.is_file()
+    launch_text = launch_file.read_text(encoding="utf-8")
+    assert 'executable="actuator_feedback_monitor_node"' in launch_text
     config_text = shared_config.read_text(encoding="utf-8")
     for required_parameter in (
         "target_frame",
@@ -288,6 +334,10 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
         "warning_max_abs_linear_x",
         "warning_max_abs_linear_y",
         "warning_max_abs_angular_z",
+        "stop_budget_sec",
+        "feedback_stale_threshold_sec",
+        "epsilon_stop_linear",
+        "epsilon_stop_angular",
         "dynamic_braking_enabled",
         "safety_policy_version",
         "clearance_threshold_m",

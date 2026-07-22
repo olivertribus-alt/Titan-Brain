@@ -48,3 +48,13 @@ command_path_observability_node:
     observation_to_command_budget_sec: 0.10
     max_correlation_entries: 256
     max_pending_per_correlation: 16
+
+actuator_feedback_monitor_node:
+  ros__parameters:
+    policy_version: "TB-ACT-001C-0.1.0"
+    output_frame_id: "base_link"
+    stop_budget_sec: 0.10
+    feedback_stale_threshold_sec: 0.05
+    epsilon_stop_linear: 0.01
+    epsilon_stop_angular: 0.02
+    timer_period_sec: 0.01

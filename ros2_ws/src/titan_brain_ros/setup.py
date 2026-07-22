@@ -29,6 +29,8 @@ setup(
             "titan_brain_ros.velocity_arbiter_node:main",
             "command_path_observability_node = "
             "titan_brain_ros.command_path_observability_node:main",
+            "actuator_feedback_monitor_node = "
+            "titan_brain_ros.actuator_feedback_monitor_node:main",
         ],
     },
 )

@@ -490,6 +490,20 @@ def test_invalid_future_feedback_latches_invalid_data(
     assert monitor.fault_reason is StopAckReason.INVALID_FEEDBACK
 
 
+def test_feedback_from_before_stop_request_cannot_ack(
+    monitor: StopAckMonitor,
+) -> None:
+    monitor.request_stop(_request(), now_ns=100)
+
+    result = monitor.observe_feedback(
+        _feedback(timestamp_ns=99),
+        now_ns=110,
+    )
+
+    assert result.state is StopMonitorState.HARDWARE_FAULT_LATCH
+    assert result.reason is StopAckReason.FEEDBACK_BEFORE_STOP_REQUEST
+
+
 def test_reset_wrapper_clears_latch(
     monitor: StopAckMonitor,
 ) -> None:

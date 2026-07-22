@@ -45,6 +45,7 @@ class StopAckReason(StrEnum):
     STOP_ACKNOWLEDGED = "stop_acknowledged"
     INVALID_FEEDBACK = "invalid_feedback"
     STALE_FEEDBACK = "stale_feedback"
+    FEEDBACK_BEFORE_STOP_REQUEST = "feedback_before_stop_request"
     FEEDBACK_CORRELATION_MISMATCH = "feedback_correlation_mismatch"
     FEEDBACK_SEQUENCE_REGRESSION = "feedback_sequence_regression"
     STOP_TIMEOUT = "stop_timeout"
@@ -443,6 +444,11 @@ class StopAckMonitor:
             if isinstance(feedback, ActuatorFeedback)
             else ActuatorFeedback.model_validate(feedback)
         )
+        if parsed_feedback.timestamp_ns < request.requested_timestamp_ns:
+            return self._latch(
+                StopAckReason.FEEDBACK_BEFORE_STOP_REQUEST,
+                timestamp_ns=checked_feedback_now,
+            )
         if (
             self._last_feedback_sequence_id is not None
             and parsed_feedback.sequence_id <= self._last_feedback_sequence_id

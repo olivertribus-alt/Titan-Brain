@@ -45,5 +45,12 @@ def generate_launch_description() -> LaunchDescription:
                 parameters=[config_file],
                 output="screen",
             ),
+            Node(
+                package=_PACKAGE_NAME,
+                executable="actuator_feedback_monitor_node",
+                name="actuator_feedback_monitor_node",
+                parameters=[config_file],
+                output="screen",
+            ),
         ]
     )
