@@ -10,6 +10,7 @@ from core.safety_supervisor import (
     DEFAULT_HEARTBEAT_TIMEOUT_NS,
     Heartbeat,
     HeartbeatChannel,
+    RelayFeedback,
     RelayRequest,
     SafetyReason,
     SafetyState,
@@ -26,12 +27,14 @@ def _config(
     *,
     timeout_ns: int = 100,
     initialization_timeout_ns: int = 100,
+    relay_budget_ns: int = 50,
 ) -> SafetySupervisorConfig:
     return SafetySupervisorConfig(
         control_arbiter_timeout_ns=timeout_ns,
         actuator_monitor_timeout_ns=timeout_ns,
         odometry_timeout_ns=timeout_ns,
         initialization_timeout_ns=initialization_timeout_ns,
+        relay_budget_ns=relay_budget_ns,
     )
 
 
@@ -39,11 +42,13 @@ def _supervisor(
     *,
     timeout_ns: int = 100,
     initialization_timeout_ns: int = 100,
+    relay_budget_ns: int = 50,
 ) -> SafetySupervisor:
     return SafetySupervisor(
         _config(
             timeout_ns=timeout_ns,
             initialization_timeout_ns=initialization_timeout_ns,
+            relay_budget_ns=relay_budget_ns,
         ),
         started_at_ns=0,
     )
@@ -286,3 +291,179 @@ def test_aliases_and_positional_record_api_are_usable() -> None:
         timestamp_ns=2,
     )
     assert second.state is SafetyState.INITIALIZING
+
+
+def test_relay_budget_and_feedback_contract_defaults() -> None:
+    config = SafetySupervisorConfig()
+    assert config.relay_budget_ns == 50_000_000
+
+    feedback = RelayFeedback(is_closed=False, timestamp_ns=10)
+    assert feedback.valid is True
+    with pytest.raises(ValueError):
+        RelayFeedback(is_closed=1, timestamp_ns=10)  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        RelayFeedback(is_closed=False, timestamp_ns=-1)
+    with pytest.raises(ValueError):
+        RelayFeedback(
+            is_closed=False,
+            timestamp_ns=10,
+            valid=1,  # type: ignore[arg-type]
+        )
+
+
+def test_open_feedback_acknowledges_initial_fail_closed_request() -> None:
+    supervisor = _supervisor()
+
+    result = supervisor.observe_relay_feedback(False, timestamp_ns=1)
+
+    assert result.state is SafetyState.INITIALIZING
+    assert result.relay_feedback_closed is False
+    assert result.relay_feedback_valid is True
+    assert result.relay_transition_pending is False
+
+
+def test_ok_state_waits_for_closed_relay_feedback_then_detects_disconnect() -> None:
+    supervisor = _supervisor()
+    _make_ready(supervisor)
+
+    pending = supervisor.evaluate(now_ns=4)
+    assert pending.state is SafetyState.OK
+    assert pending.relay_transition_pending is True
+    acknowledged = supervisor.observe_relay_feedback(True, timestamp_ns=5)
+    assert acknowledged.state is SafetyState.OK
+    assert acknowledged.relay_transition_pending is False
+
+    disconnected = supervisor.observe_relay_feedback(False, timestamp_ns=6)
+    assert disconnected.state is SafetyState.HARDWARE_FAULT_LATCH
+    assert disconnected.reason is SafetyReason.UNINTENDED_DISCONNECT
+    assert disconnected.relay_request is RelayRequest.REQUEST_SAFETY_OPEN
+
+
+def test_relay_timeout_latches_when_close_feedback_never_arrives() -> None:
+    supervisor = _supervisor()
+    _make_ready(supervisor)
+
+    result = supervisor.evaluate(now_ns=54)
+
+    assert result.state is SafetyState.HARDWARE_FAULT_LATCH
+    assert result.reason is SafetyReason.RELAY_TIMEOUT
+
+
+def test_welded_contacts_latch_after_trip_open_budget() -> None:
+    supervisor = _supervisor(timeout_ns=10)
+    _make_ready(supervisor)
+    supervisor.observe_relay_feedback(True, timestamp_ns=4)
+
+    tripped = supervisor.evaluate(now_ns=14)
+    assert tripped.state is SafetyState.TRIPPED
+    assert tripped.relay_transition_pending is True
+    welded = supervisor.observe_relay_feedback(True, timestamp_ns=65)
+
+    assert welded.state is SafetyState.HARDWARE_FAULT_LATCH
+    assert welded.reason is SafetyReason.WELDED_CONTACTS
+
+
+@pytest.mark.parametrize(
+    ("feedback", "valid", "timestamp", "reason"),
+    (
+        (1, True, 1, SafetyReason.INVALID_RELAY_FEEDBACK),
+        (False, False, 1, SafetyReason.INVALID_RELAY_FEEDBACK),
+        (False, True, float("nan"), SafetyReason.INVALID_RELAY_FEEDBACK),
+    ),
+)
+def test_invalid_relay_feedback_latches(
+    feedback: object,
+    valid: object,
+    timestamp: object,
+    reason: SafetyReason,
+) -> None:
+    supervisor = _supervisor()
+
+    result = supervisor.observe_relay_feedback(
+        feedback,
+        timestamp_ns=timestamp,
+        valid=valid,
+    )
+
+    assert result.state is SafetyState.HARDWARE_FAULT_LATCH
+    assert result.reason is reason
+
+
+def test_relay_clock_regression_latches() -> None:
+    supervisor = _supervisor()
+    supervisor.observe_relay_feedback(False, timestamp_ns=10)
+
+    result = supervisor.observe_relay_feedback(False, timestamp_ns=9)
+
+    assert result.state is SafetyState.HARDWARE_FAULT_LATCH
+    assert result.reason is SafetyReason.RELAY_CLOCK_REGRESSION
+
+
+def test_reset_requires_open_feedback_healthy_heartbeats_and_authorized_sequence(
+) -> None:
+    supervisor = _supervisor()
+    supervisor.latch_hardware_fault(now_ns=1, detail="weld test")
+
+    rejected = supervisor.reset_hardware_fault(
+        authorization="wrong",
+        sequence_id=1,
+        now_ns=2,
+    )
+    assert rejected.state is SafetyState.HARDWARE_FAULT_LATCH
+    assert rejected.reason is SafetyReason.RESET_REJECTED
+
+    supervisor.observe_relay_feedback(False, timestamp_ns=3)
+    for offset, channel in enumerate(CHANNELS, start=10):
+        supervisor.receive_heartbeat(channel, timestamp_ns=offset)
+
+    accepted = supervisor.reset_hardware_fault(
+        authorization="TB-SAFE-RESET-001B",
+        sequence_id=1,
+        now_ns=13,
+    )
+    assert accepted.state is SafetyState.OK
+    assert accepted.reason is SafetyReason.RESET_ACCEPTED
+    assert accepted.relay_transition_pending is True
+
+    closed = supervisor.observe_relay_feedback(True, timestamp_ns=14)
+    assert closed.state is SafetyState.OK
+    assert closed.relay_transition_pending is False
+
+    replayed = supervisor.reset_hardware_fault(
+        authorization="TB-SAFE-RESET-001B",
+        sequence_id=1,
+        now_ns=15,
+    )
+    assert replayed.reason is SafetyReason.RESET_REJECTED
+
+
+def test_reset_rejects_missing_heartbeat_and_closed_relay() -> None:
+    supervisor = _supervisor()
+    supervisor.latch_hardware_fault(now_ns=1)
+
+    closed = supervisor.observe_relay_feedback(True, timestamp_ns=2)
+    assert closed.state is SafetyState.HARDWARE_FAULT_LATCH
+    rejected = supervisor.reset_hardware_fault(
+        authorization="TB-SAFE-RESET-001B",
+        sequence_id=1,
+        now_ns=3,
+    )
+    assert rejected.reason is SafetyReason.RESET_REJECTED
+
+
+def test_typed_relay_feedback_and_invalid_reset_timestamp_are_fail_closed() -> None:
+    supervisor = _supervisor()
+    supervisor.latch_hardware_fault(now_ns=1)
+    feedback = supervisor.observe_relay_feedback_message(
+        RelayFeedback(is_closed=False, timestamp_ns=2)
+    )
+    assert feedback.state is SafetyState.HARDWARE_FAULT_LATCH
+
+    invalid_type = supervisor.observe_relay_feedback_message(object())
+    assert invalid_type.reason is SafetyReason.HARDWARE_FAULT_LATCHED
+    invalid_reset = supervisor.reset_hardware_fault(
+        authorization="TB-SAFE-RESET-001B",
+        sequence_id=1,
+        now_ns=float("nan"),
+    )
+    assert invalid_reset.reason is SafetyReason.RESET_REJECTED
