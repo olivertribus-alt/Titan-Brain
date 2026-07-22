@@ -17,6 +17,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/PermittedMotionEnvelope.msg"
   "msg/ArbitrationStatus.msg"
   "msg/CommandPathObservabilityStatus.msg"
+  "msg/ActuatorFeedback.msg"
+  "msg/StopAcknowledgement.msg"
   DEPENDENCIES builtin_interfaces geometry_msgs std_msgs
 )
 
