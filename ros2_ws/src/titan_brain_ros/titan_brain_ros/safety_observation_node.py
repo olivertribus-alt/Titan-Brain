@@ -25,6 +25,7 @@ from titan_brain_msgs.msg import (
     EvaluatorObservabilityStatus as EvaluatorObservabilityStatusMsg,
 )
 from titan_brain_msgs.msg import SafetyEvaluationStatus as SafetyEvaluationStatusMsg
+from titan_brain_msgs.msg import SafetyIntent as SafetyIntentMsg
 from titan_brain_msgs.msg import SafetyObservation as SafetyObservationMsg
 from titan_brain_msgs.msg import SafetyStabilityStatus as SafetyStabilityStatusMsg
 
@@ -39,6 +40,7 @@ from core.adapters.ros_observation import (
     RosObservationAdapterConfig,
     RosObservationProcessingResult,
     WatchdogReport,
+    WatchdogStatus,
 )
 from core.braking import BrakingEnvelopeConfig
 from core.incident_store import FileIncidentStore, IncidentStoreError
@@ -155,6 +157,30 @@ def _stability_state_code(transition: StabilityTransition) -> int:
             SafetyStabilityStatusMsg.STATE_RECOVERY_HOLDING
         ),
     }[transition.state]
+
+
+def _safety_intent_state(result: RosObservationProcessingResult) -> int:
+    """Map effective evaluator authority to the strict control-plane enum."""
+    transition = result.stability_transition
+    if transition is not None:
+        return {
+            EvaluatorState.OK: SafetyIntentMsg.STATE_NORMAL,
+            EvaluatorState.WARNING: SafetyIntentMsg.STATE_WARNING,
+            EvaluatorState.E_STOP: SafetyIntentMsg.STATE_E_STOP,
+            EvaluatorState.RECOVERY_HOLDING: (
+                SafetyIntentMsg.STATE_RECOVERY_HOLDING
+            ),
+        }[transition.state]
+
+    effective = result.decision
+    if effective is None:
+        return SafetyIntentMsg.STATE_E_STOP
+    return {
+        "proceed": SafetyIntentMsg.STATE_NORMAL,
+        "clamp": SafetyIntentMsg.STATE_WARNING,
+        "protective_stop": SafetyIntentMsg.STATE_WARNING,
+        "emergency_stop": SafetyIntentMsg.STATE_E_STOP,
+    }.get(effective.decision.action, SafetyIntentMsg.STATE_E_STOP)
 
 
 class SafetyObservationNode(Node):
@@ -326,6 +352,9 @@ class SafetyObservationNode(Node):
             stability_config=stability_config,
         )
         self._observability = EvaluatorObservability(observability_config)
+        self._safety_intent_sequence_id = 0
+        self._last_safety_intent: SafetyIntentMsg | None = None
+        self._watchdog_stop_status: WatchdogStatus | None = None
 
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
@@ -342,6 +371,11 @@ class SafetyObservationNode(Node):
         self._observability_publisher = self.create_publisher(
             EvaluatorObservabilityStatusMsg,
             "/safety/evaluator_observability",
+            status_qos_profile(),
+        )
+        self._safety_intent_publisher = self.create_publisher(
+            SafetyIntentMsg,
+            "/safety/intent",
             status_qos_profile(),
         )
         self._observation_subscription = self.create_subscription(
@@ -373,6 +407,11 @@ class SafetyObservationNode(Node):
     def observability(self) -> EvaluatorObservability:
         """Expose immutable metric snapshots for integration diagnostics."""
         return self._observability
+
+    @property
+    def last_safety_intent(self) -> SafetyIntentMsg | None:
+        """Return the latest authoritative control-plane message."""
+        return self._last_safety_intent
 
     @staticmethod
     def _message_timestamp_ns(message: ObservationMessage) -> int:
@@ -504,6 +543,15 @@ class SafetyObservationNode(Node):
             status.action = decision.action
             status.rule = decision.rule
             status.is_incident = result.decision.is_incident
+        correlation_id = status.decision_id or (
+            f"missing_decision_id_{published_at.nanoseconds}"
+        )
+        self._publish_safety_intent(
+            published_at,
+            state=_safety_intent_state(result),
+            correlation_id=correlation_id,
+        )
+        self._watchdog_stop_status = None
         self._publish_observability(
             observation_ns=observation_ns,
             received_at=received_at,
@@ -517,6 +565,22 @@ class SafetyObservationNode(Node):
         )
         self._status_publisher.publish(status)
         self._publish_stability_status(published_at, result)
+
+    def _publish_safety_intent(
+        self,
+        now: Time,
+        *,
+        state: int,
+        correlation_id: str,
+    ) -> None:
+        self._safety_intent_sequence_id += 1
+        message = SafetyIntentMsg()
+        message.state = state
+        message.timestamp = now.to_msg()
+        message.correlation_id = correlation_id
+        message.sequence_id = self._safety_intent_sequence_id
+        self._safety_intent_publisher.publish(message)
+        self._last_safety_intent = message
 
     def _publish_observability(
         self,
@@ -599,6 +663,14 @@ class SafetyObservationNode(Node):
             published_at=published_at,
             outcome=EvaluationOutcome.REJECTED,
         )
+        self._publish_safety_intent(
+            published_at,
+            state=SafetyIntentMsg.STATE_E_STOP,
+            correlation_id=(
+                f"transport_{adapter_status}_{published_at.nanoseconds}"
+            ),
+        )
+        self._watchdog_stop_status = None
         self._status_publisher.publish(status)
 
     def _on_observation(self, message: SafetyObservationMsg) -> None:
@@ -687,6 +759,21 @@ class SafetyObservationNode(Node):
         status = self._base_status(now, watchdog)
         status.adapter_status = "watchdog"
         self._status_publisher.publish(status)
+        if watchdog.status is WatchdogStatus.HEALTHY:
+            self._watchdog_stop_status = None
+        elif (
+            watchdog.status
+            in {WatchdogStatus.TIMED_OUT, WatchdogStatus.CLOCK_REGRESSION}
+            and watchdog.status is not self._watchdog_stop_status
+        ):
+            self._publish_safety_intent(
+                now,
+                state=SafetyIntentMsg.STATE_E_STOP,
+                correlation_id=(
+                    f"watchdog_{watchdog.status.value}_{now.nanoseconds}"
+                ),
+            )
+            self._watchdog_stop_status = watchdog.status
 
 
 def main(args: list[str] | None = None) -> None:

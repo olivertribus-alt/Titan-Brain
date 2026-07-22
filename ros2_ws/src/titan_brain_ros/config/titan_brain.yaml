@@ -34,3 +34,6 @@ velocity_arbiter_node:
     max_abs_linear_x: 0.8
     max_abs_linear_y: 0.2
     max_abs_angular_z: 1.5
+    warning_max_abs_linear_x: 0.3
+    warning_max_abs_linear_y: 0.1
+    warning_max_abs_angular_z: 0.5
