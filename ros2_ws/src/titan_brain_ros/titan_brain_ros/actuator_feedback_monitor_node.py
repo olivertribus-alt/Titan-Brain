@@ -7,7 +7,6 @@ from collections.abc import Mapping
 
 import rclpy
 from geometry_msgs.msg import Twist
-from rclpy.exceptions import RCLError
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import (
@@ -32,6 +31,11 @@ from core.stop_ack_monitor import (
     StopMonitorConfig,
     StopMonitorResult,
 )
+
+try:
+    from rclpy.exceptions import RCLError
+except ImportError:  # ROS 2 Jazzy exposes the type from its pybind module.
+    from rclpy._rclpy_pybind11 import RCLError
 
 _NANOSECONDS_PER_SECOND = 1_000_000_000
 _ZERO_EPSILON = 1e-12

@@ -17,7 +17,6 @@ from geometry_msgs.msg import Twist
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from rclpy.exceptions import RCLError
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import (
@@ -37,6 +36,11 @@ from titan_brain_msgs.msg import (
     SafetyObservation,
     SafetyStabilityStatus,
 )
+
+try:
+    from rclpy.exceptions import RCLError
+except ImportError:  # ROS 2 Jazzy exposes the type from its pybind module.
+    from rclpy._rclpy_pybind11 import RCLError
 
 _PACKAGE_NAME = "titan_brain_ros"
 _DISCOVERY_TIMEOUT_SEC = 10.0
