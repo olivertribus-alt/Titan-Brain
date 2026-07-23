@@ -41,6 +41,8 @@ setup(
             "titan_brain_ros.safety_loop_supervisor_node:main",
             "command_governor_node = "
             "titan_brain_ros.command_governor_node:main",
+            "safety_velocity_arbiter_node = "
+            "titan_brain_ros.safety_velocity_arbiter_node:main",
         ],
     },
 )

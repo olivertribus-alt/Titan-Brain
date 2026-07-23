@@ -2,6 +2,13 @@
 uint8 MODE_PASS_THROUGH=0
 uint8 MODE_CLAMPED=1
 uint8 MODE_FORCED_ZERO=2
+uint8 SOURCE_NONE=0
+uint8 SOURCE_AUTONOMY=1
+uint8 SOURCE_TELEOPERATION=2
+uint8 FAULT_OK=0
+uint8 FAULT_E_STOP_ACTIVE=1
+uint8 FAULT_HARDWARE_FAULT=2
+uint8 FAULT_LATCHED_SAFETY_FAULT=3
 
 std_msgs/Header header
 uint8 mode
@@ -28,3 +35,6 @@ float64 warning_max_abs_linear_x
 float64 warning_max_abs_linear_y
 float64 warning_max_abs_angular_z
 geometry_msgs/Twist commanded_twist
+string active_source
+uint8 system_fault_state
+string rejection_reason

@@ -152,6 +152,13 @@ def test_titan_brain_message_contracts_are_explicit() -> None:
         "uint8 MODE_PASS_THROUGH=0",
         "uint8 MODE_CLAMPED=1",
         "uint8 MODE_FORCED_ZERO=2",
+        "uint8 SOURCE_NONE=0",
+        "uint8 SOURCE_AUTONOMY=1",
+        "uint8 SOURCE_TELEOPERATION=2",
+        "uint8 FAULT_OK=0",
+        "uint8 FAULT_E_STOP_ACTIVE=1",
+        "uint8 FAULT_HARDWARE_FAULT=2",
+        "uint8 FAULT_LATCHED_SAFETY_FAULT=3",
         "std_msgs/Header header",
         "uint8 mode",
         "string reason",
@@ -177,6 +184,17 @@ def test_titan_brain_message_contracts_are_explicit() -> None:
         "float64 warning_max_abs_linear_y",
         "float64 warning_max_abs_angular_z",
         "geometry_msgs/Twist commanded_twist",
+        "string active_source",
+        "uint8 system_fault_state",
+        "string rejection_reason",
+    ]
+    assert _message_fields(messages / "SystemFaultStatus.msg") == [
+        "uint8 FAULT_OK=0",
+        "uint8 FAULT_E_STOP_ACTIVE=1",
+        "uint8 FAULT_HARDWARE_FAULT=2",
+        "uint8 FAULT_LATCHED_SAFETY_FAULT=3",
+        "std_msgs/Header header",
+        "uint8 fault_state",
     ]
     assert _message_fields(messages / "CommandPathObservabilityStatus.msg") == [
         "std_msgs/Header header",
@@ -299,6 +317,7 @@ def test_message_package_declares_rosidl_and_message_dependencies() -> None:
     assert '"msg/SafetyHeartbeat.msg"' in cmake
     assert '"msg/SafetyRelayStatus.msg"' in cmake
     assert '"msg/SafetySupervisorStatus.msg"' in cmake
+    assert '"msg/SystemFaultStatus.msg"' in cmake
 
 
 def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
@@ -328,6 +347,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert "titan_brain_ros.actuator_feedback_monitor_node:main" in setup
     assert "titan_brain_ros.safety_loop_supervisor_node:main" in setup
     assert "titan_brain_ros.command_governor_node:main" in setup
+    assert "titan_brain_ros.safety_velocity_arbiter_node:main" in setup
     assert (package / "resource" / "titan_brain_ros").is_file()
     assert (
         package / "titan_brain_ros" / "safety_observation_node.py"
@@ -346,6 +366,9 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     ).is_file()
     assert (
         package / "titan_brain_ros" / "command_governor_node.py"
+    ).is_file()
+    assert (
+        package / "titan_brain_ros" / "safety_velocity_arbiter_node.py"
     ).is_file()
     shared_config = package / "config" / "titan_brain.yaml"
     launch_file = package / "launch" / "titan_brain.launch.py"
@@ -418,6 +441,10 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
         "max_angular_deceleration_radps2",
         "max_linear_jerk_mps3",
         "max_angular_jerk_radps3",
+        "envelope_timeout_sec",
+        "fault_timeout_sec",
+        "arbitration_latency_budget_sec",
+        "policy_version",
     ):
         assert f"{required_parameter}:" in config_text
     max_observation_age_sec = _float_parameter(
