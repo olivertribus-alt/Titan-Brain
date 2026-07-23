@@ -197,7 +197,7 @@ def test_fresh_scan_publishes_correlated_dynamic_authority() -> None:
         now_ns = node._now_ns() + 1_000_000
         node._now_ns = lambda: now_ns
         node._on_fault_status(_fault(now_ns, SystemFaultStatus.FAULT_OK))
-        node._on_scan(_scan(now_ns, forward_m=0.8, lateral_m=0.6))
+        node._on_scan(_scan(now_ns, forward_m=0.5, lateral_m=0.6))
         node._on_timer()
 
         envelope = node.last_envelope

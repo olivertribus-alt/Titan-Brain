@@ -12,6 +12,9 @@ from core.braking import BrakingEnvelopeConfig, calculate_stopping_distance
 from core.motion_envelope import calculate_permitted_speed_limit
 from core.types.incident import StrictFrozenModel
 
+LINEAR_ZERO_CLAMP_MPS = 1e-5
+ANGULAR_ZERO_CLAMP_RADPS = 1e-5
+
 
 class EnvelopeSource(StrEnum):
     """Bounded sensor sources accepted by the evaluator."""
@@ -209,6 +212,10 @@ class DynamicEnvelopeEvaluator:
             self._config.nominal_angular_velocity_radps,
             tangential_limit / self._config.angular_swept_radius_m,
         )
+        if linear_limit < LINEAR_ZERO_CLAMP_MPS:
+            linear_limit = 0.0
+        if angular_limit < ANGULAR_ZERO_CLAMP_RADPS:
+            angular_limit = 0.0
 
         if linear_limit == 0.0 and angular_limit == 0.0:
             state = EnvelopeState.PROTECTIVE_STOP

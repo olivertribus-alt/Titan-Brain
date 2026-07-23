@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import struct
 
 import pytest
 from pydantic import ValidationError
@@ -103,6 +104,19 @@ def test_close_forward_obstacle_blocks_all_swept_motion() -> None:
     assert result.state is EnvelopeState.PROTECTIVE_STOP
     assert result.stop_only is True
     assert result.limiting_zone is LimitingZone.FORWARD
+
+
+def test_float32_margin_roundoff_clamps_to_absolute_zero() -> None:
+    encoded_margin = struct.unpack("f", struct.pack("f", 0.30))[0]
+    result = DynamicEnvelopeEvaluator().evaluate(
+        _frame(forward=encoded_margin, lateral=encoded_margin)
+    )
+
+    assert encoded_margin > 0.30
+    assert result.max_linear_velocity_mps == 0.0
+    assert result.max_angular_velocity_radps == 0.0
+    assert result.state is EnvelopeState.PROTECTIVE_STOP
+    assert result.stop_only is True
 
 
 def test_close_lateral_obstacle_blocks_rotation_but_not_forward_motion() -> None:
