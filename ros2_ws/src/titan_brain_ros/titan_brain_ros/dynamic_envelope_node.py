@@ -149,6 +149,7 @@ def extract_scan_distances(
     lateral = float(scan.range_max)
     forward_seen = False
     lateral_seen = False
+    finite_return_seen = False
     angle = float(scan.angle_min)
     for raw_range in scan.ranges:
         measured = float(raw_range)
@@ -158,6 +159,8 @@ def extract_scan_distances(
             measured = float(scan.range_max)
         elif measured < scan.range_min or measured > scan.range_max:
             raise ValueError("SCAN_RANGE_INVALID")
+        else:
+            finite_return_seen = True
 
         normalized_angle = _normalize_angle(angle)
         if abs(normalized_angle) <= front_half_angle_rad:
@@ -170,6 +173,8 @@ def extract_scan_distances(
 
     if not forward_seen or not lateral_seen:
         raise ValueError("SCAN_SECTOR_COVERAGE_INCOMPLETE")
+    if not finite_return_seen:
+        raise ValueError("SCAN_NO_FINITE_RETURNS")
     return ScanDistances(forward_m=forward, lateral_m=lateral)
 
 
@@ -287,6 +292,7 @@ class DynamicEnvelopeNode(Node):
 
         self._latest_scan: LaserScan | None = None
         self._latest_fault: SystemFaultStatus | None = None
+        self._last_scan_timestamp_ns: int | None = None
         self._last_now_ns: int | None = None
         self._timing_fault_latched = False
         self._sequence_id = 0
@@ -339,6 +345,17 @@ class DynamicEnvelopeNode(Node):
         return int(self.get_clock().now().nanoseconds)
 
     def _on_scan(self, message: LaserScan) -> None:
+        timestamp_ns = _stamp_ns(message)
+        if (
+            self._last_scan_timestamp_ns is not None
+            and timestamp_ns <= self._last_scan_timestamp_ns
+        ):
+            self._timing_fault_latched = True
+        if (
+            self._last_scan_timestamp_ns is None
+            or timestamp_ns > self._last_scan_timestamp_ns
+        ):
+            self._last_scan_timestamp_ns = timestamp_ns
         self._latest_scan = message
 
     def _on_fault_status(self, message: SystemFaultStatus) -> None:

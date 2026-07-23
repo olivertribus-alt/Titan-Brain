@@ -14,7 +14,9 @@ ranges, out-of-contract distances, missing sector coverage, and scans larger
 than `max_scan_samples`. This hard bound makes scan processing constant with
 respect to untrusted input size without subsampling away obstacles. Positive
 infinity is treated as the standard LaserScan “no return” value and bounded by
-`range_max`.
+`range_max`. A scan containing no finite return in any sector is rejected as
+missing usable evidence rather than interpreted as an unconditionally clear
+path.
 
 ## Fail-closed invariants
 

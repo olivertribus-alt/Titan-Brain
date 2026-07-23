@@ -230,6 +230,34 @@ def test_missing_or_invalid_envelope_is_fail_closed() -> None:
         _destroy(node)
 
 
+def test_stop_only_envelope_bypasses_governor_and_forces_zero() -> None:
+    rclpy.init()
+    node = _new_node()
+    try:
+        now_ns = _set_test_time(node)
+        node._on_fault_status(_fault(SystemFaultStatus.FAULT_OK, now_ns))
+        node._on_motion_envelope(_envelope(now_ns))
+        node._on_teleop_command(_twist(now_ns, linear_x=0.5))
+        node._on_timer()
+        assert node.last_result is not None
+        assert node.last_result.linear_velocity_mps == 0.5
+
+        node._on_motion_envelope(_envelope(now_ns, max_linear_x=0.0))
+        node._on_timer()
+        assert node.last_result is not None
+        assert node.last_result.emergency_override is True
+        assert node.last_result.linear_velocity_mps == 0.0
+        assert node.last_result.angular_velocity_radps == 0.0
+        assert node.last_status is not None
+        assert node.last_status.mode == node.last_status.MODE_FORCED_ZERO
+        assert (
+            node.last_status.rejection_reason
+            == "MOTION_ENVELOPE_STOP_ONLY"
+        )
+    finally:
+        _destroy(node)
+
+
 def test_future_command_timestamp_is_rejected_fail_closed() -> None:
     rclpy.init()
     node = _new_node()

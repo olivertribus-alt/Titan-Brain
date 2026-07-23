@@ -161,15 +161,26 @@ def test_invalid_ranges_are_rejected(invalid: float) -> None:
         )
 
 
-def test_positive_infinity_is_a_valid_no_return() -> None:
-    scan = _scan(1, forward_m=math.inf, lateral_m=math.inf)
+def test_positive_infinity_is_valid_when_finite_evidence_remains() -> None:
+    scan = _scan(1, forward_m=0.8, lateral_m=0.6)
+    scan.ranges[180] = math.inf
     distances = extract_scan_distances(
         scan,
         front_half_angle_rad=math.radians(45.0),
         max_scan_samples=512,
     )
-    assert distances.forward_m == scan.range_max
-    assert distances.lateral_m == scan.range_max
+    assert distances.forward_m == pytest.approx(0.8)
+    assert distances.lateral_m == pytest.approx(0.6)
+
+
+def test_all_positive_infinity_is_rejected_as_missing_evidence() -> None:
+    scan = _scan(1, forward_m=math.inf, lateral_m=math.inf)
+    with pytest.raises(ValueError, match="SCAN_NO_FINITE_RETURNS"):
+        extract_scan_distances(
+            scan,
+            front_half_angle_rad=math.radians(45.0),
+            max_scan_samples=512,
+        )
 
 
 def test_startup_is_fail_closed_and_has_single_envelope_publisher() -> None:
@@ -321,6 +332,38 @@ def test_clock_regression_latches_fail_closed() -> None:
         node._on_timer()
         assert node.last_envelope is not None
         assert node.last_envelope.max_linear_x_mps == 0.0
+        assert node.last_diagnostics is not None
+        assert node.last_diagnostics.reason == "CLOCK_REGRESSION_LATCHED"
+    finally:
+        _destroy(node)
+
+
+@pytest.mark.parametrize("scan_timestamp_offset_ns", [-1, 0])
+def test_scan_timestamp_regression_or_stagnation_latches_fail_closed(
+    scan_timestamp_offset_ns: int,
+) -> None:
+    rclpy.init()
+    node = DynamicEnvelopeNode(parameter_overrides=_parameters())
+    try:
+        baseline_ns = node._now_ns() + 1_000_000
+        node._now_ns = lambda: baseline_ns
+        node._on_fault_status(
+            _fault(baseline_ns, SystemFaultStatus.FAULT_OK)
+        )
+        node._on_scan(_scan(baseline_ns))
+        node._on_timer()
+        assert node.last_envelope is not None
+        assert node.last_envelope.max_linear_x_mps > 0.0
+
+        node._on_scan(_scan(baseline_ns + scan_timestamp_offset_ns))
+        node._on_timer()
+        assert node.last_envelope is not None
+        assert node.last_envelope.max_linear_x_mps == 0.0
+        assert node.last_diagnostics is not None
+        assert node.last_diagnostics.reason == "CLOCK_REGRESSION_LATCHED"
+
+        node._on_scan(_scan(baseline_ns + 1))
+        node._on_timer()
         assert node.last_diagnostics is not None
         assert node.last_diagnostics.reason == "CLOCK_REGRESSION_LATCHED"
     finally:

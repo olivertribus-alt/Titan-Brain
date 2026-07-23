@@ -561,3 +561,28 @@ def test_ci_uses_the_reproducible_jazzy_container_gate() -> None:
     )
     assert "ros-tooling/setup-ros" not in workflow
     assert "--break-system-packages" not in workflow
+
+
+def test_tb_eval_008c_fault_injection_gate_is_complete() -> None:
+    integration_test = (
+        ROS_SOURCE
+        / "titan_brain_ros"
+        / "test"
+        / "test_integration_rosbag_008c.py"
+    ).read_text(encoding="utf-8")
+    documentation = (REPOSITORY_ROOT / "TB-EVAL-008C.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "@pytest.mark.launch_test" in integration_test
+    assert '"SCAN_TIMEOUT"' in integration_test
+    assert '"CLEARANCE_REQUIRES_STOP"' in integration_test
+    assert '"SCAN_RANGE_INVALID"' in integration_test
+    assert '"SCAN_NO_FINITE_RETURNS"' in integration_test
+    assert '"SCAN_FRAME_MISSING"' in integration_test
+    assert '"SYSTEM_FAULT_HARDWARE_FAULT"' in integration_test
+    assert '"CLOCK_REGRESSION_LATCHED"' in integration_test
+    assert '"MOTION_ENVELOPE_STOP_ONLY"' in integration_test
+    assert "_CHAIN_STOP_BUDGET_NS = 250_000_000" in integration_test
+    assert "test_fault_injection_suite" in integration_test
+    assert "Fault Injection and Safety Validation Gate" in documentation
