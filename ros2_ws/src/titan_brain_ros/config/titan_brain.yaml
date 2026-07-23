@@ -83,3 +83,21 @@ command_governor_node:
     max_angular_deceleration_radps2: 2.0
     max_linear_jerk_mps3: 5.0
     max_angular_jerk_radps3: 5.0
+
+safety_velocity_arbiter_node:
+  ros__parameters:
+    policy_version: "TB-EVAL-007B-0.1.0"
+    output_frame_id: "base_link"
+    command_timeout_sec: 0.10
+    envelope_timeout_sec: 0.05
+    fault_timeout_sec: 0.20
+    arbitration_latency_budget_sec: 0.03
+    timer_period_sec: 0.02
+    max_linear_velocity_mps: 1.0
+    max_angular_velocity_radps: 1.0
+    max_linear_acceleration_mps2: 1.0
+    max_linear_deceleration_mps2: 2.0
+    max_angular_acceleration_radps2: 1.0
+    max_angular_deceleration_radps2: 2.0
+    max_linear_jerk_mps3: 5.0
+    max_angular_jerk_radps3: 5.0
