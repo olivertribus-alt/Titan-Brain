@@ -196,6 +196,34 @@ def test_titan_brain_message_contracts_are_explicit() -> None:
         "std_msgs/Header header",
         "uint8 fault_state",
     ]
+    assert _message_fields(messages / "EnvelopeDiagnostics.msg") == [
+        "uint8 STATE_FAIL_CLOSED=0",
+        "uint8 STATE_PROTECTIVE_STOP=1",
+        "uint8 STATE_LIMITED=2",
+        "uint8 STATE_NOMINAL=3",
+        "uint8 ZONE_NONE=0",
+        "uint8 ZONE_FORWARD=1",
+        "uint8 ZONE_LATERAL=2",
+        "uint8 ZONE_SENSOR=3",
+        "uint8 ZONE_SYSTEM_FAULT=4",
+        "uint8 ZONE_TIMING=5",
+        "std_msgs/Header header",
+        "string policy_version",
+        "string correlation_id",
+        "uint64 sequence_id",
+        "uint8 state",
+        "uint8 limiting_zone",
+        "string reason",
+        "bool scan_valid",
+        "bool fault_status_valid",
+        "float64 scan_age_sec",
+        "float64 distance_forward_m",
+        "float64 distance_lateral_m",
+        "float64 linear_stopping_distance_m",
+        "float64 angular_stopping_distance_m",
+        "float64 max_linear_velocity_mps",
+        "float64 max_angular_velocity_radps",
+    ]
     assert _message_fields(messages / "CommandPathObservabilityStatus.msg") == [
         "std_msgs/Header header",
         "string schema_version",
@@ -318,6 +346,7 @@ def test_message_package_declares_rosidl_and_message_dependencies() -> None:
     assert '"msg/SafetyRelayStatus.msg"' in cmake
     assert '"msg/SafetySupervisorStatus.msg"' in cmake
     assert '"msg/SystemFaultStatus.msg"' in cmake
+    assert '"msg/EnvelopeDiagnostics.msg"' in cmake
 
 
 def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
@@ -333,6 +362,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
         "launch_testing",
         "launch_testing_ros",
         "rclpy",
+        "sensor_msgs",
         "tf2_ros",
         "titan_brain_msgs",
     } <= dependencies
@@ -348,6 +378,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert "titan_brain_ros.safety_loop_supervisor_node:main" in setup
     assert "titan_brain_ros.command_governor_node:main" in setup
     assert "titan_brain_ros.safety_velocity_arbiter_node:main" in setup
+    assert "titan_brain_ros.dynamic_envelope_node:main" in setup
     assert (package / "resource" / "titan_brain_ros").is_file()
     assert (
         package / "titan_brain_ros" / "safety_observation_node.py"
@@ -370,6 +401,9 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert (
         package / "titan_brain_ros" / "safety_velocity_arbiter_node.py"
     ).is_file()
+    assert (
+        package / "titan_brain_ros" / "dynamic_envelope_node.py"
+    ).is_file()
     shared_config = package / "config" / "titan_brain.yaml"
     launch_file = package / "launch" / "titan_brain.launch.py"
     e2e_test = package / "test" / "test_e2e_transport.py"
@@ -390,8 +424,10 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert 'executable="command_governor_node"' in command_launch_text
     safety_launch_text = safety_launch_file.read_text(encoding="utf-8")
     assert 'executable="safety_velocity_arbiter_node"' in safety_launch_text
+    assert 'executable="dynamic_envelope_node"' in safety_launch_text
     assert 'executable="velocity_arbiter_node"' not in safety_launch_text
     assert 'executable="command_governor_node"' not in safety_launch_text
+    assert '{"publish_motion_envelope": False}' in safety_launch_text
     replay_text = replay_test.read_text(encoding="utf-8")
     assert "@pytest.mark.launch_test" in replay_text
     assert '"/teleop/cmd_vel"' in replay_text
@@ -429,6 +465,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
         "assured_deceleration_mps2",
         "clearance_margin_m",
         "motion_envelope_frame_id",
+        "publish_motion_envelope",
         "stability_enabled",
         "stability_policy_version",
         "clearance_hysteresis_m",
@@ -457,6 +494,10 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
         "max_linear_jerk_mps3",
         "max_angular_jerk_radps3",
         "envelope_timeout_sec",
+        "sensor_timeout_sec",
+        "front_sector_deg",
+        "max_scan_samples",
+        "angular_swept_radius_m",
         "fault_timeout_sec",
         "arbitration_latency_budget_sec",
         "policy_version",

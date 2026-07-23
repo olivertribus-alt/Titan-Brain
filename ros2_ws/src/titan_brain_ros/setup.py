@@ -44,6 +44,8 @@ setup(
             "titan_brain_ros.command_governor_node:main",
             "safety_velocity_arbiter_node = "
             "titan_brain_ros.safety_velocity_arbiter_node:main",
+            "dynamic_envelope_node = "
+            "titan_brain_ros.dynamic_envelope_node:main",
         ],
     },
 )

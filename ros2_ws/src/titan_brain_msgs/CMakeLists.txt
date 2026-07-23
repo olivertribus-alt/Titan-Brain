@@ -23,6 +23,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/SafetyRelayStatus.msg"
   "msg/SafetySupervisorStatus.msg"
   "msg/SystemFaultStatus.msg"
+  "msg/EnvelopeDiagnostics.msg"
   DEPENDENCIES builtin_interfaces geometry_msgs std_msgs
 )
 

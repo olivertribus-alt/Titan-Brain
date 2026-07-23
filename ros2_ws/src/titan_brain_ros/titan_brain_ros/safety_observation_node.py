@@ -356,6 +356,13 @@ class SafetyObservationNode(Node):
             "motion_envelope_frame_id",
             "base_link",
         )
+        publish_motion_envelope = self.declare_parameter(
+            "publish_motion_envelope",
+            True,
+        ).value
+        if not isinstance(publish_motion_envelope, bool):
+            raise ValueError("publish_motion_envelope must be boolean")
+        self._publish_motion_envelope_enabled = publish_motion_envelope
         self._braking_config = braking_config
         self._stability_config = stability_config
         self._tf_timeout = Duration(
@@ -395,10 +402,14 @@ class SafetyObservationNode(Node):
             "/safety/intent",
             status_qos_profile(),
         )
-        self._motion_envelope_publisher = self.create_publisher(
-            PermittedMotionEnvelopeMsg,
-            "/safety/permitted_motion_envelope",
-            status_qos_profile(),
+        self._motion_envelope_publisher = (
+            self.create_publisher(
+                PermittedMotionEnvelopeMsg,
+                "/safety/permitted_motion_envelope",
+                status_qos_profile(),
+            )
+            if self._publish_motion_envelope_enabled
+            else None
         )
         self._observation_subscription = self.create_subscription(
             SafetyObservationMsg,
@@ -620,7 +631,8 @@ class SafetyObservationNode(Node):
         result: RosObservationProcessingResult | None,
     ) -> None:
         config = self._braking_config
-        if config is None:
+        publisher = self._motion_envelope_publisher
+        if config is None or publisher is None:
             return
 
         limits = PlanarVelocityLimits(
@@ -661,7 +673,7 @@ class SafetyObservationNode(Node):
         message.max_linear_y_mps = limits.max_linear_y_mps
         message.min_angular_z_radps = 0.0
         message.max_angular_z_radps = limits.max_abs_angular_z_radps
-        self._motion_envelope_publisher.publish(message)
+        publisher.publish(message)
         self._last_motion_envelope = message
 
     def _record_observability(

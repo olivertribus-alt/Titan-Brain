@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 import unittest
 from collections.abc import Callable
@@ -23,9 +24,9 @@ from rclpy.qos import (
     QoSProfile,
     ReliabilityPolicy,
 )
+from sensor_msgs.msg import LaserScan
 from titan_brain_msgs.msg import (
     ArbitrationStatus,
-    PermittedMotionEnvelope,
     SystemFaultStatus,
 )
 
@@ -39,6 +40,15 @@ def _reliable_qos(depth: int) -> QoSProfile:
         history=HistoryPolicy.KEEP_LAST,
         depth=depth,
         reliability=ReliabilityPolicy.RELIABLE,
+        durability=DurabilityPolicy.VOLATILE,
+    )
+
+
+def _sensor_qos() -> QoSProfile:
+    return QoSProfile(
+        history=HistoryPolicy.KEEP_LAST,
+        depth=1,
+        reliability=ReliabilityPolicy.BEST_EFFORT,
         durability=DurabilityPolicy.VOLATILE,
     )
 
@@ -59,7 +69,7 @@ def generate_test_description() -> LaunchDescription:
 
 
 class TestSafetyVelocityArbiterReplay(unittest.TestCase):
-    """Replay deterministic command/fault/envelope frames over real DDS."""
+    """Replay deterministic scan, command, and fault frames over real DDS."""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -82,10 +92,10 @@ class TestSafetyVelocityArbiterReplay(unittest.TestCase):
             "/safety/system_fault_status",
             _reliable_qos(10),
         )
-        cls.envelope = cls.node.create_publisher(
-            PermittedMotionEnvelope,
-            "/safety/permitted_motion_envelope",
-            _reliable_qos(10),
+        cls.scan = cls.node.create_publisher(
+            LaserScan,
+            "/scan",
+            _sensor_qos(),
         )
         cls.output_subscription = cls.node.create_subscription(
             TwistStamped,
@@ -126,6 +136,11 @@ class TestSafetyVelocityArbiterReplay(unittest.TestCase):
                 and self.node.count_subscribers(
                     "/safety/system_fault_status"
                 )
+                == 2
+                and self.node.count_subscribers("/scan") == 1
+                and self.node.count_publishers(
+                    "/safety/permitted_motion_envelope"
+                )
                 == 1
                 and self.node.count_publishers("/cmd_vel") == 1
             ),
@@ -134,7 +149,7 @@ class TestSafetyVelocityArbiterReplay(unittest.TestCase):
 
     def _stamp_now(
         self,
-        message: TwistStamped | PermittedMotionEnvelope | SystemFaultStatus,
+        message: TwistStamped | LaserScan | SystemFaultStatus,
     ) -> int:
         now_ns = int(self.node.get_clock().now().nanoseconds)
         header = message.header
@@ -147,18 +162,17 @@ class TestSafetyVelocityArbiterReplay(unittest.TestCase):
         self._stamp_now(fault)
         fault.fault_state = fault_state
 
-        envelope = PermittedMotionEnvelope()
-        envelope.header.frame_id = "base_link"
-        self._stamp_now(envelope)
-        envelope.policy_version = "TB-EVAL-007B-REPLAY"
-        envelope.correlation_id = "bag-frame-1"
-        envelope.sequence_id = 1
-        envelope.min_linear_x_mps = -0.25
-        envelope.max_linear_x_mps = 0.25
-        envelope.min_linear_y_mps = 0.0
-        envelope.max_linear_y_mps = 0.0
-        envelope.min_angular_z_radps = 0.0
-        envelope.max_angular_z_radps = 0.0
+        scan = LaserScan()
+        scan.header.frame_id = "laser"
+        self._stamp_now(scan)
+        scan.angle_min = -math.pi
+        scan.angle_max = math.pi
+        scan.angle_increment = (2.0 * math.pi) / 360
+        scan.range_min = 0.1
+        scan.range_max = 10.0
+        scan.ranges = [5.0] * 360
+        for index in range(135, 226):
+            scan.ranges[index] = 0.35
 
         autonomy = TwistStamped()
         autonomy.header.frame_id = "base_link"
@@ -171,7 +185,7 @@ class TestSafetyVelocityArbiterReplay(unittest.TestCase):
         teleop.twist.linear.x = 0.8
 
         self.fault.publish(fault)
-        self.envelope.publish(envelope)
+        self.scan.publish(scan)
         self.autonomy.publish(autonomy)
         self.teleop.publish(teleop)
 
@@ -194,7 +208,7 @@ class TestSafetyVelocityArbiterReplay(unittest.TestCase):
             self.fail("Teleoperation replay was not selected and clamped")
 
         self.assertTrue(self.outputs)
-        self.assertLessEqual(abs(self.outputs[-1].twist.linear.x), 0.25)
+        self.assertLessEqual(abs(self.outputs[-1].twist.linear.x), 0.30)
 
         self.outputs.clear()
         self.statuses.clear()
