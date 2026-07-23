@@ -18,6 +18,7 @@ setup(
             [
                 "launch/titan_brain.launch.py",
                 "launch/command_governor.launch.py",
+                "launch/safety_control_plane.launch.py",
             ],
         ),
     ],

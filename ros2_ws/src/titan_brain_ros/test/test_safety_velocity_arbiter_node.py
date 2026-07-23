@@ -47,7 +47,10 @@ def _new_node() -> SafetyVelocityArbiterNode:
     return SafetyVelocityArbiterNode(parameter_overrides=_parameters())
 
 
-def _stamp(message: TwistStamped | PermittedMotionEnvelope, timestamp_ns: int) -> None:
+def _stamp(
+    message: TwistStamped | PermittedMotionEnvelope | SystemFaultStatus,
+    timestamp_ns: int,
+) -> None:
     message.header.stamp.sec = timestamp_ns // 1_000_000_000
     message.header.stamp.nanosec = timestamp_ns % 1_000_000_000
 
@@ -89,8 +92,9 @@ def _envelope(
     return message
 
 
-def _fault(state: int) -> SystemFaultStatus:
+def _fault(state: int, timestamp_ns: int) -> SystemFaultStatus:
     message = SystemFaultStatus()
+    _stamp(message, timestamp_ns)
     message.fault_state = state
     return message
 
@@ -142,7 +146,7 @@ def test_teleoperation_wins_and_is_envelope_clamped() -> None:
     node = _new_node()
     try:
         now_ns = _set_test_time(node)
-        node._on_fault_status(_fault(SystemFaultStatus.FAULT_OK))
+        node._on_fault_status(_fault(SystemFaultStatus.FAULT_OK, now_ns))
         node._on_motion_envelope(_envelope(now_ns, max_linear_x=0.5))
         node._on_autonomy_command(_twist(now_ns, linear_x=0.2))
         node._on_teleop_command(_twist(now_ns, linear_x=1.5))
@@ -153,6 +157,10 @@ def test_teleoperation_wins_and_is_envelope_clamped() -> None:
         assert node.last_status is not None
         assert node.last_status.active_source == "teleoperation"
         assert node.last_status.mode == node.last_status.MODE_CLAMPED
+        assert node.last_status.arbitration_timing_valid is True
+        assert node.last_status.arbitration_within_budget is True
+        assert node.last_status.arbitration_latency_status == "within_budget"
+        assert node.last_status.command_sequence_id >= 2
     finally:
         _destroy(node)
 
@@ -162,7 +170,7 @@ def test_autonomy_is_selected_when_teleop_is_stale() -> None:
     node = _new_node()
     try:
         now_ns = _set_test_time(node)
-        node._on_fault_status(_fault(SystemFaultStatus.FAULT_OK))
+        node._on_fault_status(_fault(SystemFaultStatus.FAULT_OK, now_ns))
         node._on_motion_envelope(_envelope(now_ns))
         node._on_teleop_command(_twist(now_ns - 101_000_000, linear_x=1.0))
         node._on_autonomy_command(_twist(now_ns, linear_x=0.25))
@@ -180,7 +188,9 @@ def test_fault_status_bypasses_all_commands() -> None:
     node = _new_node()
     try:
         now_ns = _set_test_time(node)
-        node._on_fault_status(_fault(SystemFaultStatus.FAULT_E_STOP_ACTIVE))
+        node._on_fault_status(
+            _fault(SystemFaultStatus.FAULT_E_STOP_ACTIVE, now_ns)
+        )
         node._on_motion_envelope(_envelope(now_ns))
         node._on_teleop_command(_twist(now_ns, linear_x=1.0))
         node._on_timer()
@@ -202,7 +212,7 @@ def test_missing_or_invalid_envelope_is_fail_closed() -> None:
     node = _new_node()
     try:
         now_ns = _set_test_time(node)
-        node._on_fault_status(_fault(SystemFaultStatus.FAULT_OK))
+        node._on_fault_status(_fault(SystemFaultStatus.FAULT_OK, now_ns))
         node._on_teleop_command(_twist(now_ns, linear_x=0.5))
         node._on_timer()
         assert node.last_result is not None
@@ -225,7 +235,7 @@ def test_future_command_timestamp_is_rejected_fail_closed() -> None:
     node = _new_node()
     try:
         now_ns = _set_test_time(node)
-        node._on_fault_status(_fault(SystemFaultStatus.FAULT_OK))
+        node._on_fault_status(_fault(SystemFaultStatus.FAULT_OK, now_ns))
         node._on_motion_envelope(_envelope(now_ns))
         node._on_teleop_command(_twist(now_ns + 1, linear_x=0.5))
         node._on_timer()
@@ -242,7 +252,7 @@ def test_unsupported_lateral_or_vertical_motion_is_rejected() -> None:
     node = _new_node()
     try:
         now_ns = _set_test_time(node)
-        node._on_fault_status(_fault(SystemFaultStatus.FAULT_OK))
+        node._on_fault_status(_fault(SystemFaultStatus.FAULT_OK, now_ns))
         node._on_motion_envelope(_envelope(now_ns))
         message = _twist(now_ns, linear_x=0.25)
         message.twist.linear.y = 0.01
@@ -252,5 +262,55 @@ def test_unsupported_lateral_or_vertical_motion_is_rejected() -> None:
         assert node.last_result.emergency_override is True
         assert node.last_status is not None
         assert node.last_status.rejection_reason == "INVALID_COMMAND_FRAME"
+    finally:
+        _destroy(node)
+
+
+def test_fault_status_timestamp_is_checked_fail_closed() -> None:
+    rclpy.init()
+    node = _new_node()
+    try:
+        now_ns = _set_test_time(node)
+        node._on_motion_envelope(_envelope(now_ns))
+        node._on_teleop_command(_twist(now_ns, linear_x=0.25))
+
+        node._on_fault_status(_fault(SystemFaultStatus.FAULT_OK, now_ns + 1))
+        node._on_timer()
+        assert node.last_status is not None
+        assert (
+            node.last_status.rejection_reason
+            == "SYSTEM_FAULT_STATUS_FUTURE_TIMESTAMP"
+        )
+
+        node._on_fault_status(
+            _fault(SystemFaultStatus.FAULT_OK, now_ns - 201_000_000)
+        )
+        node._on_timer()
+        assert node.last_status is not None
+        assert node.last_status.rejection_reason == "SYSTEM_FAULT_STATUS_TIMEOUT"
+
+        node._on_fault_status(_fault(255, now_ns))
+        node._on_timer()
+        assert node.last_status is not None
+        assert node.last_status.rejection_reason == "INVALID_SYSTEM_FAULT_STATE"
+    finally:
+        _destroy(node)
+
+
+def test_nonzero_lateral_envelope_authority_is_rejected() -> None:
+    rclpy.init()
+    node = _new_node()
+    try:
+        now_ns = _set_test_time(node)
+        node._on_fault_status(_fault(SystemFaultStatus.FAULT_OK, now_ns))
+        invalid = _envelope(now_ns)
+        invalid.max_linear_y_mps = 0.1
+        node._on_motion_envelope(invalid)
+        node._on_teleop_command(_twist(now_ns, linear_x=0.25))
+        node._on_timer()
+        assert node.last_status is not None
+        assert node.last_status.rejection_reason == "MOTION_ENVELOPE_INVALID"
+        assert node.last_result is not None
+        assert node.last_result.emergency_override is True
     finally:
         _destroy(node)

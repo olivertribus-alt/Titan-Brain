@@ -93,7 +93,9 @@ def _seconds_to_ns(value: float, *, name: str) -> int:
     return result
 
 
-def _stamp_ns(message: TwistStamped | PermittedMotionEnvelope) -> int:
+def _stamp_ns(
+    message: TwistStamped | PermittedMotionEnvelope | SystemFaultStatus,
+) -> int:
     stamp = message.header.stamp
     return int(stamp.sec) * NANOSECONDS_PER_SECOND + int(stamp.nanosec)
 
@@ -200,11 +202,12 @@ class SafetyVelocityArbiterNode(Node):
         self._teleop_frame: object | None = None
         self._autonomy_frame: object | None = None
         self._fault_state: SystemFaultState | None = None
-        self._fault_received_ns: int | None = None
+        self._fault_timestamp_ns: int | None = None
         self._envelope: PermittedMotionEnvelope | None = None
         self._last_selection: SelectionResult | None = None
         self._last_result: GovernorResult | None = None
         self._last_status: ArbitrationStatus | None = None
+        self._command_sequence_id = 0
 
         self._command_publisher = self.create_publisher(
             TwistStamped,
@@ -310,19 +313,41 @@ class SafetyVelocityArbiterNode(Node):
 
     def _on_fault_status(self, message: SystemFaultStatus) -> None:
         self._fault_state = _fault_state_from_message(int(message.fault_state))
-        self._fault_received_ns = self._now_ns()
+        self._fault_timestamp_ns = _stamp_ns(message)
 
     def _on_motion_envelope(self, message: PermittedMotionEnvelope) -> None:
         self._envelope = message
 
-    def _current_fault_state(self, now_ns: int) -> SystemFaultState:
-        if self._fault_received_ns is None or self._fault_state is None:
-            return SystemFaultState.LATCHED_SAFETY_FAULT
-        if now_ns < self._fault_received_ns:
-            return SystemFaultState.LATCHED_SAFETY_FAULT
-        if now_ns - self._fault_received_ns > self._fault_timeout_ns:
-            return SystemFaultState.LATCHED_SAFETY_FAULT
-        return self._fault_state
+    def _current_fault_state(
+        self,
+        now_ns: int,
+    ) -> tuple[object, SystemFaultState, str | None]:
+        """Return selector input, auditable state, and freshness rejection."""
+        if self._fault_timestamp_ns is None:
+            return (
+                SystemFaultState.LATCHED_SAFETY_FAULT,
+                SystemFaultState.LATCHED_SAFETY_FAULT,
+                "SYSTEM_FAULT_STATUS_MISSING",
+            )
+        if self._fault_state is None:
+            return (
+                object(),
+                SystemFaultState.LATCHED_SAFETY_FAULT,
+                "INVALID_SYSTEM_FAULT_STATE",
+            )
+        if self._fault_timestamp_ns > now_ns:
+            return (
+                SystemFaultState.LATCHED_SAFETY_FAULT,
+                SystemFaultState.LATCHED_SAFETY_FAULT,
+                "SYSTEM_FAULT_STATUS_FUTURE_TIMESTAMP",
+            )
+        if now_ns - self._fault_timestamp_ns > self._fault_timeout_ns:
+            return (
+                SystemFaultState.LATCHED_SAFETY_FAULT,
+                SystemFaultState.LATCHED_SAFETY_FAULT,
+                "SYSTEM_FAULT_STATUS_TIMEOUT",
+            )
+        return self._fault_state, self._fault_state, None
 
     def _clamp_with_envelope(
         self,
@@ -346,14 +371,25 @@ class SafetyVelocityArbiterNode(Node):
         limits = (
             float(envelope.min_linear_x_mps),
             float(envelope.max_linear_x_mps),
+            float(envelope.min_linear_y_mps),
+            float(envelope.max_linear_y_mps),
             float(envelope.min_angular_z_radps),
             float(envelope.max_angular_z_radps),
         )
         if any(not math.isfinite(limit) for limit in limits):
             return 0.0, 0.0, "MOTION_ENVELOPE_INVALID", False
-        min_linear, max_linear, min_angular, max_angular = limits
+        (
+            min_linear,
+            max_linear,
+            min_lateral,
+            max_lateral,
+            min_angular,
+            max_angular,
+        ) = limits
         if (
             min_linear > max_linear
+            or min_lateral != 0.0
+            or max_lateral != 0.0
             or min_angular > max_angular
             or min_angular != 0.0
             or max_angular != 0.0
@@ -400,6 +436,7 @@ class SafetyVelocityArbiterNode(Node):
         status.mode = mode
         status.reason = reason
         status.policy_version = self._policy_version
+        self._command_sequence_id += 1
         envelope = self._envelope
         status.correlation_id = (
             str(envelope.correlation_id).strip()
@@ -410,7 +447,7 @@ class SafetyVelocityArbiterNode(Node):
                 else ""
             )
         )
-        status.command_sequence_id = 0
+        status.command_sequence_id = self._command_sequence_id
         status.motion_envelope_correlation_id = (
             str(envelope.correlation_id).strip() if envelope is not None else ""
         )
@@ -434,12 +471,33 @@ class SafetyVelocityArbiterNode(Node):
         status.warning_max_abs_angular_z = (
             float(envelope.max_angular_z_radps) if envelope is not None else 0.0
         )
-        status.intent_received_timestamp_ns = 0
         status.command_published_timestamp_ns = published_at_ns
-        status.arbitration_latency_status = "invalid_timing"
-        status.arbitration_timing_valid = False
-        status.arbitration_within_budget = False
-        status.arbitration_latency_ns = 0
+        selected_frame = selection.selected_frame
+        timing_valid = (
+            selected_frame is not None
+            and selected_frame.timestamp_ns <= published_at_ns
+        )
+        latency_ns = (
+            published_at_ns - selected_frame.timestamp_ns
+            if timing_valid and selected_frame is not None
+            else 0
+        )
+        within_budget = (
+            timing_valid and latency_ns <= self._arbitration_latency_budget_ns
+        )
+        status.intent_received_timestamp_ns = (
+            selected_frame.timestamp_ns if selected_frame is not None else 0
+        )
+        status.arbitration_latency_status = (
+            "within_budget"
+            if within_budget
+            else "over_budget"
+            if timing_valid
+            else "invalid_timing"
+        )
+        status.arbitration_timing_valid = timing_valid
+        status.arbitration_within_budget = within_budget
+        status.arbitration_latency_ns = latency_ns
         status.arbitration_latency_budget_ns = self._arbitration_latency_budget_ns
         status.is_safe = mode != ArbitrationStatus.MODE_FORCED_ZERO
         status.commanded_twist = output.twist
@@ -473,9 +531,9 @@ class SafetyVelocityArbiterNode(Node):
 
     def _on_timer(self) -> None:
         now_ns = self._now_ns()
-        fault_state = self._current_fault_state(now_ns)
+        fault_input, fault_state, fault_rejection = self._current_fault_state(now_ns)
         selection = self._selector.select_source(
-            fault_state,
+            fault_input,  # type: ignore[arg-type]
             self._teleop_frame,  # type: ignore[arg-type]
             self._autonomy_frame,  # type: ignore[arg-type]
             now_ns,
@@ -486,7 +544,11 @@ class SafetyVelocityArbiterNode(Node):
                 now_ns=now_ns,
                 selection=selection,
                 fault_state=fault_state,
-                reason=selection.rejection_reason or "NO_VALID_COMMAND_SOURCE",
+                reason=(
+                    fault_rejection
+                    or selection.rejection_reason
+                    or "NO_VALID_COMMAND_SOURCE"
+                ),
             )
             return
         linear, angular, envelope_reason, envelope_changed = (

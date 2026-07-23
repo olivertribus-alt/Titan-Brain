@@ -377,6 +377,10 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert launch_file.is_file()
     command_launch_file = package / "launch" / "command_governor.launch.py"
     assert command_launch_file.is_file()
+    safety_launch_file = package / "launch" / "safety_control_plane.launch.py"
+    assert safety_launch_file.is_file()
+    replay_test = package / "test" / "test_integration_rosbag_007b.py"
+    assert replay_test.is_file()
     assert e2e_test.is_file()
     launch_text = launch_file.read_text(encoding="utf-8")
     assert 'executable="actuator_feedback_monitor_node"' in launch_text
@@ -384,6 +388,17 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert 'executable="command_governor_node"' in launch_text
     command_launch_text = command_launch_file.read_text(encoding="utf-8")
     assert 'executable="command_governor_node"' in command_launch_text
+    safety_launch_text = safety_launch_file.read_text(encoding="utf-8")
+    assert 'executable="safety_velocity_arbiter_node"' in safety_launch_text
+    assert 'executable="velocity_arbiter_node"' not in safety_launch_text
+    assert 'executable="command_governor_node"' not in safety_launch_text
+    replay_text = replay_test.read_text(encoding="utf-8")
+    assert "@pytest.mark.launch_test" in replay_text
+    assert '"/teleop/cmd_vel"' in replay_text
+    assert '"/autonomy/cmd_vel"' in replay_text
+    assert '"/safety/system_fault_status"' in replay_text
+    assert '"/safety/permitted_motion_envelope"' in replay_text
+    assert '"/cmd_vel"' in replay_text
     config_text = shared_config.read_text(encoding="utf-8")
     for required_parameter in (
         "target_frame",
@@ -473,6 +488,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert _float_parameter(config_text, "observation_to_command_budget_sec") == 0.10
     assert '"config/titan_brain.yaml"' in setup
     assert '"launch/titan_brain.launch.py"' in setup
+    assert '"launch/safety_control_plane.launch.py"' in setup
     launch_text = launch_file.read_text(encoding="utf-8")
     e2e_text = e2e_test.read_text(encoding="utf-8")
     assert 'executable="safety_observation_node"' in launch_text

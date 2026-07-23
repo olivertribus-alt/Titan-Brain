@@ -23,9 +23,17 @@ Missing or stale safety state, envelopes, commands, future timestamps, invalid
 frames, and any non-OK fault state produce a zero command.  The node exposes a
 single console entry point, `safety_velocity_arbiter_node`; operators must
 select it in place of `velocity_arbiter_node` rather than launching both.
+The opt-in `safety_control_plane.launch.py` profile makes that replacement and
+does not start the legacy arbiter or the standalone governor, because the
+007B node already embeds the TB-EVAL-006 governor.
 
 ## Contracts
 
 `SystemFaultStatus` is the explicit control-plane fault input.  The existing
 `ArbitrationStatus` contract now carries `active_source`, `system_fault_state`,
 and a machine-readable `rejection_reason` for audit and observability.
+Fault freshness is evaluated from the message header timestamp, not callback
+arrival time.  Arbitration timing fields measure selected-command stamp to
+final publication and report `within_budget`, `over_budget`, or
+`invalid_timing`.  Every published decision receives a node-local monotonic
+`command_sequence_id`, including fail-closed zero decisions.
