@@ -396,6 +396,13 @@ class SafetyVelocityArbiterNode(Node):
             or min_angular != -max_angular
         ):
             return 0.0, 0.0, "MOTION_ENVELOPE_INVALID", False
+        if (
+            min_linear == 0.0
+            and max_linear == 0.0
+            and min_angular == 0.0
+            and max_angular == 0.0
+        ):
+            return 0.0, 0.0, "MOTION_ENVELOPE_STOP_ONLY", False
         clamped_linear = max(min_linear, min(max_linear, frame.linear_x))
         clamped_angular = max(min_angular, min(max_angular, frame.angular_z))
         changed = (
