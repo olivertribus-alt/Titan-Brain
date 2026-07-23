@@ -1,4 +1,4 @@
-"""Launch TB-EVAL-007B with one authoritative ``/cmd_vel`` publisher."""
+"""Launch the 007B/008B safety control plane with single output authorities."""
 
 from pathlib import Path
 
@@ -12,7 +12,7 @@ _PACKAGE_NAME = "titan_brain_ros"
 
 
 def generate_launch_description() -> LaunchDescription:
-    """Start the safety pipeline with the priority arbiter as sole authority."""
+    """Start one dynamic-envelope and one final-velocity authority."""
     package_share = Path(get_package_share_directory(_PACKAGE_NAME))
     default_config = package_share / "config" / "titan_brain.yaml"
     config_file = LaunchConfiguration("config_file")
@@ -28,6 +28,16 @@ def generate_launch_description() -> LaunchDescription:
                 package=_PACKAGE_NAME,
                 executable="safety_observation_node",
                 name="safety_observation_node",
+                parameters=[
+                    config_file,
+                    {"publish_motion_envelope": False},
+                ],
+                output="screen",
+            ),
+            Node(
+                package=_PACKAGE_NAME,
+                executable="dynamic_envelope_node",
+                name="dynamic_envelope_node",
                 parameters=[config_file],
                 output="screen",
             ),

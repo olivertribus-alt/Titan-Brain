@@ -127,6 +127,20 @@ def test_directional_observation_publishes_correlated_motion_envelope() -> None:
         rclpy.shutdown()
 
 
+def test_motion_envelope_publisher_can_be_delegated() -> None:
+    rclpy.init()
+    node = SafetyObservationNode(
+        parameter_overrides=[
+            Parameter("publish_motion_envelope", value=False),
+        ]
+    )
+    try:
+        assert node.count_publishers("/safety/permitted_motion_envelope") == 0
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
 def test_missing_directional_evidence_publishes_zero_envelope() -> None:
     rclpy.init()
     node = SafetyObservationNode(parameter_overrides=_dynamic_parameters())

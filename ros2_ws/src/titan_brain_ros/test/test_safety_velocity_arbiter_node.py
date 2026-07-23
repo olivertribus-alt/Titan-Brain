@@ -314,3 +314,41 @@ def test_nonzero_lateral_envelope_authority_is_rejected() -> None:
         assert node.last_result.emergency_override is True
     finally:
         _destroy(node)
+
+
+def test_symmetric_angular_envelope_authority_is_clamped() -> None:
+    rclpy.init()
+    node = _new_node()
+    try:
+        now_ns = _set_test_time(node)
+        node._on_fault_status(_fault(SystemFaultStatus.FAULT_OK, now_ns))
+        node._on_motion_envelope(
+            _envelope(now_ns, max_linear_x=1.0, max_angular_z=0.25)
+        )
+        node._on_teleop_command(
+            _twist(now_ns, linear_x=0.1, angular_z=1.0)
+        )
+        node._on_timer()
+        assert node.last_status is not None
+        assert node.last_status.mode == node.last_status.MODE_CLAMPED
+        assert node.last_result is not None
+        assert node.last_result.angular_velocity_radps == 0.25
+    finally:
+        _destroy(node)
+
+
+def test_asymmetric_angular_envelope_authority_is_rejected() -> None:
+    rclpy.init()
+    node = _new_node()
+    try:
+        now_ns = _set_test_time(node)
+        node._on_fault_status(_fault(SystemFaultStatus.FAULT_OK, now_ns))
+        invalid = _envelope(now_ns, max_angular_z=0.25)
+        invalid.min_angular_z_radps = -0.10
+        node._on_motion_envelope(invalid)
+        node._on_teleop_command(_twist(now_ns, angular_z=0.1))
+        node._on_timer()
+        assert node.last_status is not None
+        assert node.last_status.rejection_reason == "MOTION_ENVELOPE_INVALID"
+    finally:
+        _destroy(node)
