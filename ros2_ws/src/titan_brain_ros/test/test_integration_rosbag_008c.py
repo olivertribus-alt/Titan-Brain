@@ -299,21 +299,19 @@ class TestDynamicEnvelopeFaultInjection(unittest.TestCase):
             on_cycle=self._periodic_stream(self._publish_frame),
         )
 
-    def _assert_stop(
+    def _find_correlated_stop(
         self,
         *,
         diagnostics_reason: str,
-        diagnostics_state: int,
         arbitration_reason: str = "MOTION_ENVELOPE_STOP_ONLY",
-    ) -> EnvelopeDiagnostics:
-        matched: (
-            tuple[
-                EnvelopeDiagnostics,
-                PermittedMotionEnvelope,
-                ArbitrationStatus,
-            ]
-            | None
-        ) = None
+    ) -> (
+        tuple[
+            EnvelopeDiagnostics,
+            PermittedMotionEnvelope,
+            ArbitrationStatus,
+        ]
+        | None
+    ):
         for candidate in self.diagnostics:
             if candidate.reason != diagnostics_reason:
                 continue
@@ -338,8 +336,20 @@ class TestDynamicEnvelopeFaultInjection(unittest.TestCase):
                 None,
             )
             if envelope is not None and status is not None:
-                matched = candidate, envelope, status
-                break
+                return candidate, envelope, status
+        return None
+
+    def _assert_stop(
+        self,
+        *,
+        diagnostics_reason: str,
+        diagnostics_state: int,
+        arbitration_reason: str = "MOTION_ENVELOPE_STOP_ONLY",
+    ) -> EnvelopeDiagnostics:
+        matched = self._find_correlated_stop(
+            diagnostics_reason=diagnostics_reason,
+            arbitration_reason=arbitration_reason,
+        )
         self.assertIsNotNone(
             matched,
             "No correlated diagnostic, envelope, and arbitration stop found",
@@ -375,15 +385,11 @@ class TestDynamicEnvelopeFaultInjection(unittest.TestCase):
     ) -> None:
         self._spin_until(
             lambda: (
-                any(
-                    message.reason == diagnostics_reason
-                    for message in self.diagnostics
+                self._find_correlated_stop(
+                    diagnostics_reason=diagnostics_reason,
+                    arbitration_reason=arbitration_reason,
                 )
-                and any(
-                    message.rejection_reason == arbitration_reason
-                    and message.mode == message.MODE_FORCED_ZERO
-                    for message in self.statuses
-                )
+                is not None
                 and any(
                     message.twist.linear.x == 0.0
                     and message.twist.angular.z == 0.0
@@ -510,19 +516,16 @@ class TestDynamicEnvelopeFaultInjection(unittest.TestCase):
 
             self._clear_observations()
             self._publish_frame()
-            self._spin_until(
-                lambda: any(
-                    message.sequence_id > latched.sequence_id
-                    and message.reason == "CLOCK_REGRESSION_LATCHED"
-                    for message in self.diagnostics
-                ),
+            self._wait_for_stop(
+                diagnostics_reason="CLOCK_REGRESSION_LATCHED",
                 on_cycle=self._periodic_stream(self._publish_control),
                 timeout_sec=1.0,
             )
-            self._assert_stop(
+            persisted = self._assert_stop(
                 diagnostics_reason="CLOCK_REGRESSION_LATCHED",
                 diagnostics_state=EnvelopeDiagnostics.STATE_FAIL_CLOSED,
             )
+            self.assertGreater(persisted.sequence_id, latched.sequence_id)
 
 
 @launch_testing.post_shutdown_test()
