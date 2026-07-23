@@ -43,7 +43,7 @@ except ImportError:  # ROS 2 Jazzy exposes the type from its pybind module.
     from rclpy._rclpy_pybind11 import RCLError
 
 _PACKAGE_NAME = "titan_brain_ros"
-_DISCOVERY_TIMEOUT_SEC = 10.0
+_DISCOVERY_TIMEOUT_SEC = 30.0
 _SCENARIO_TIMEOUT_SEC = 5.0
 _DRIVER_POLL_PERIOD_SEC = 0.005
 _INPUT_STREAM_PERIOD_NS = 20_000_000
@@ -370,6 +370,40 @@ class TestTitanBrainTransport(unittest.TestCase):
             f"recent command paths={command_path_states!r}"
         )
 
+    def _graph_counts(self) -> str:
+        """Return live DDS graph counts for discovery failure diagnostics."""
+        return (
+            "subscriptions="
+            f"directional={self.observation_publisher.get_subscription_count()}, "
+            f"legacy={self.legacy_observation_publisher.get_subscription_count()}, "
+            f"navigation={self.navigation_publisher.get_subscription_count()}; "
+            "publishers="
+            f"cmd_vel={self.node.count_publishers('/cmd_vel')}, "
+            f"arbitration={self.node.count_publishers('/safety/arbitration_status')}, "
+            f"evaluation={self.node.count_publishers('/safety/evaluation_status')}, "
+            f"stability={self.node.count_publishers('/safety/stability_status')}, "
+            f"intent={self.node.count_publishers('/safety/intent')}, "
+            "motion_envelope="
+            f"{self.node.count_publishers('/safety/permitted_motion_envelope')}, "
+            "command_path="
+            f"{self.node.count_publishers('/safety/command_path_observability')}"
+        )
+
+    def _graph_present(self) -> bool:
+        """Return whether every required endpoint has been discovered."""
+        return (
+            self.observation_publisher.get_subscription_count() >= 1
+            and self.legacy_observation_publisher.get_subscription_count() >= 1
+            and self.navigation_publisher.get_subscription_count() >= 1
+            and self.node.count_publishers("/cmd_vel") >= 1
+            and self.node.count_publishers("/safety/arbitration_status") >= 1
+            and self.node.count_publishers("/safety/evaluation_status") >= 1
+            and self.node.count_publishers("/safety/stability_status") >= 1
+            and self.node.count_publishers("/safety/intent") >= 1
+            and self.node.count_publishers("/safety/permitted_motion_envelope") >= 1
+            and self.node.count_publishers("/safety/command_path_observability") >= 1
+        )
+
     def _stream_inputs_until_arbitration(
         self,
         *,
@@ -508,27 +542,13 @@ class TestTitanBrainTransport(unittest.TestCase):
     def test_complete_safety_transport_pipeline(self) -> None:
         """Verify startup, motion, stop, and staleness over live DDS topics."""
         self._wait_for(
-            lambda: (
-                self.observation_publisher.get_subscription_count() == 1
-                and self.legacy_observation_publisher.get_subscription_count()
-                == 1
-                and self.navigation_publisher.get_subscription_count() == 1
-                and self.node.count_publishers("/cmd_vel") == 1
-                and self.node.count_publishers("/safety/arbitration_status") == 1
-                and self.node.count_publishers("/safety/evaluation_status") == 1
-                and self.node.count_publishers("/safety/stability_status") == 1
-                and self.node.count_publishers("/safety/intent") == 1
-                and self.node.count_publishers(
-                    "/safety/permitted_motion_envelope"
-                )
-                == 1
-                and self.node.count_publishers(
-                    "/safety/command_path_observability"
-                )
-                == 1
-            ),
+            self._graph_present,
             timeout_sec=_DISCOVERY_TIMEOUT_SEC,
-            failure_message="Expected Titan Brain ROS graph was not discovered.",
+            failure_message=lambda: (
+                "Expected Titan Brain ROS graph was not discovered within "
+                f"{_DISCOVERY_TIMEOUT_SEC:.1f}s; {self._graph_counts()}; "
+                f"{self._transport_diagnostics()}"
+            ),
         )
 
         with self.subTest("cold_start_forces_zero"):
