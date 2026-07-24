@@ -46,6 +46,8 @@ setup(
             "titan_brain_ros.safety_velocity_arbiter_node:main",
             "dynamic_envelope_node = "
             "titan_brain_ros.dynamic_envelope_node:main",
+            "safety_recovery_manager_node = "
+            "titan_brain_ros.safety_recovery_manager_node:main",
         ],
     },
 )

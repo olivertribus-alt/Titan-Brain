@@ -8,6 +8,7 @@ from rclpy.parameter import Parameter
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, ReliabilityPolicy
 from titan_brain_msgs.msg import (
     PermittedMotionEnvelope,
+    SafetyLifecycleStatus,
     SystemFaultStatus,
 )
 from titan_brain_ros.safety_velocity_arbiter_node import (
@@ -15,6 +16,7 @@ from titan_brain_ros.safety_velocity_arbiter_node import (
     AUTONOMY_COMMAND_TOPIC,
     MOTION_ENVELOPE_TOPIC,
     OUTPUT_COMMAND_TOPIC,
+    SAFETY_LIFECYCLE_TOPIC,
     SYSTEM_FAULT_TOPIC,
     TELEOP_COMMAND_TOPIC,
     SafetyVelocityArbiterNode,
@@ -43,12 +45,25 @@ def _parameters() -> list[Parameter]:
     ]
 
 
+def _lifecycle_parameters() -> list[Parameter]:
+    return [
+        *_parameters(),
+        Parameter("lifecycle_gate_enabled", value=True),
+        Parameter("lifecycle_timeout_sec", value=0.05),
+    ]
+
+
 def _new_node() -> SafetyVelocityArbiterNode:
     return SafetyVelocityArbiterNode(parameter_overrides=_parameters())
 
 
 def _stamp(
-    message: TwistStamped | PermittedMotionEnvelope | SystemFaultStatus,
+    message: (
+        TwistStamped
+        | PermittedMotionEnvelope
+        | SafetyLifecycleStatus
+        | SystemFaultStatus
+    ),
     timestamp_ns: int,
 ) -> None:
     message.header.stamp.sec = timestamp_ns // 1_000_000_000
@@ -99,6 +114,34 @@ def _fault(state: int, timestamp_ns: int) -> SystemFaultStatus:
     return message
 
 
+def _lifecycle(
+    timestamp_ns: int,
+    *,
+    state: int,
+    max_linear: float,
+    max_angular: float,
+) -> SafetyLifecycleStatus:
+    message = SafetyLifecycleStatus()
+    message.header.frame_id = "base_link"
+    _stamp(message, timestamp_ns)
+    message.schema_version = "0.1"
+    message.policy_version = "test-lifecycle-policy"
+    message.correlation_id = "lifecycle-1"
+    message.sequence_id = 1
+    message.state = state
+    message.reason = "test"
+    message.fault_status_valid = True
+    message.sensor_valid = True
+    message.sensor_fresh = True
+    message.time_valid = True
+    message.recovery_active = (
+        state == SafetyLifecycleStatus.STATE_RECOVERY
+    )
+    message.max_linear_velocity_mps = max_linear
+    message.max_angular_velocity_radps = max_angular
+    return message
+
+
 def _set_test_time(node: SafetyVelocityArbiterNode) -> int:
     timestamp_ns = node.governor.last_timestamp_ns + 1_000_000_000
     node._now_ns = lambda: timestamp_ns
@@ -137,6 +180,156 @@ def test_startup_is_fail_closed_and_owns_single_output() -> None:
         assert node.count_subscribers(AUTONOMY_COMMAND_TOPIC) == 1
         assert node.count_subscribers(SYSTEM_FAULT_TOPIC) == 1
         assert node.count_subscribers(MOTION_ENVELOPE_TOPIC) == 1
+        assert node.count_subscribers(SAFETY_LIFECYCLE_TOPIC) == 1
+    finally:
+        _destroy(node)
+
+
+def test_enabled_lifecycle_gate_fails_closed_when_status_is_missing() -> None:
+    rclpy.init()
+    node = SafetyVelocityArbiterNode(
+        parameter_overrides=_lifecycle_parameters()
+    )
+    try:
+        now_ns = _set_test_time(node)
+        node._on_fault_status(_fault(SystemFaultStatus.FAULT_OK, now_ns))
+        node._on_motion_envelope(_envelope(now_ns, max_linear_x=1.0))
+        node._on_teleop_command(_twist(now_ns, linear_x=1.0))
+        node._on_timer()
+
+        assert node.last_result is not None
+        assert node.last_result.linear_velocity_mps == 0.0
+        assert node.last_status is not None
+        assert (
+            node.last_status.rejection_reason
+            == "SAFETY_LIFECYCLE_MISSING"
+        )
+    finally:
+        _destroy(node)
+
+
+def test_unhealthy_normal_lifecycle_status_is_rejected() -> None:
+    rclpy.init()
+    node = SafetyVelocityArbiterNode(
+        parameter_overrides=_lifecycle_parameters()
+    )
+    try:
+        now_ns = _set_test_time(node)
+        lifecycle = _lifecycle(
+            now_ns,
+            state=SafetyLifecycleStatus.STATE_NORMAL,
+            max_linear=1.0,
+            max_angular=1.0,
+        )
+        lifecycle.sensor_fresh = False
+        node._on_fault_status(_fault(SystemFaultStatus.FAULT_OK, now_ns))
+        node._on_motion_envelope(_envelope(now_ns, max_linear_x=1.0))
+        node._on_lifecycle_status(lifecycle)
+        node._on_teleop_command(_twist(now_ns, linear_x=1.0))
+        node._on_timer()
+
+        assert node.last_result is not None
+        assert node.last_result.linear_velocity_mps == 0.0
+        assert node.last_status is not None
+        assert (
+            node.last_status.rejection_reason
+            == "SAFETY_LIFECYCLE_INVALID"
+        )
+    finally:
+        _destroy(node)
+
+
+def test_recovery_lifecycle_cap_is_enforced_on_final_command() -> None:
+    rclpy.init()
+    node = SafetyVelocityArbiterNode(
+        parameter_overrides=_lifecycle_parameters()
+    )
+    try:
+        now_ns = _set_test_time(node)
+        node._on_fault_status(_fault(SystemFaultStatus.FAULT_OK, now_ns))
+        node._on_motion_envelope(
+            _envelope(
+                now_ns,
+                max_linear_x=1.0,
+                max_angular_z=1.0,
+            )
+        )
+        node._on_lifecycle_status(
+            _lifecycle(
+                now_ns,
+                state=SafetyLifecycleStatus.STATE_RECOVERY,
+                max_linear=0.20,
+                max_angular=0.40,
+            )
+        )
+        node._on_teleop_command(
+            _twist(now_ns, linear_x=1.0, angular_z=1.0)
+        )
+        node._on_timer()
+
+        assert node.last_result is not None
+        assert node.last_result.linear_velocity_mps == 0.20
+        assert node.last_result.angular_velocity_radps == 0.40
+        assert node.last_status is not None
+        assert node.last_status.mode == node.last_status.MODE_CLAMPED
+        assert (
+            node.last_status.reason
+            == "SAFETY_LIFECYCLE_RECOVERY_CLAMPED"
+        )
+    finally:
+        _destroy(node)
+
+
+def test_lifecycle_emergency_stop_bypasses_governor_to_exact_zero() -> None:
+    rclpy.init()
+    node = SafetyVelocityArbiterNode(
+        parameter_overrides=_lifecycle_parameters()
+    )
+    try:
+        now_ns = _set_test_time(node)
+        node._on_fault_status(_fault(SystemFaultStatus.FAULT_OK, now_ns))
+        node._on_motion_envelope(_envelope(now_ns, max_linear_x=1.0))
+        node._on_lifecycle_status(
+            _lifecycle(
+                now_ns,
+                state=SafetyLifecycleStatus.STATE_NORMAL,
+                max_linear=1.0,
+                max_angular=1.0,
+            )
+        )
+        node._on_teleop_command(_twist(now_ns, linear_x=1.0))
+        node._on_timer()
+        assert node.last_result is not None
+        assert node.last_result.linear_velocity_mps == 1.0
+
+        stopped_ns = now_ns + 1
+        node._now_ns = lambda: stopped_ns
+        node._on_fault_status(
+            _fault(SystemFaultStatus.FAULT_OK, stopped_ns)
+        )
+        node._on_motion_envelope(
+            _envelope(stopped_ns, max_linear_x=1.0)
+        )
+        node._on_lifecycle_status(
+            _lifecycle(
+                stopped_ns,
+                state=SafetyLifecycleStatus.STATE_EMERGENCY_STOP,
+                max_linear=0.0,
+                max_angular=0.0,
+            )
+        )
+        node._on_teleop_command(_twist(stopped_ns, linear_x=1.0))
+        node._on_timer()
+
+        assert node.last_result is not None
+        assert node.last_result.emergency_override is True
+        assert node.last_result.linear_velocity_mps == 0.0
+        assert node.last_result.angular_velocity_radps == 0.0
+        assert node.last_status is not None
+        assert (
+            node.last_status.reason
+            == "SAFETY_LIFECYCLE_EMERGENCY_STOP"
+        )
     finally:
         _destroy(node)
 
