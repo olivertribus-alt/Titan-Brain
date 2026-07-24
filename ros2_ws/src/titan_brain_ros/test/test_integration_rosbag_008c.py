@@ -172,7 +172,7 @@ class TestDynamicEnvelopeFaultInjection(unittest.TestCase):
                 and self.node.count_subscribers(
                     "/safety/system_fault_status"
                 )
-                == 2
+                == 3
                 and self.node.count_subscribers("/scan") == 1
                 and self.node.count_publishers(
                     "/safety/permitted_motion_envelope"
@@ -180,6 +180,10 @@ class TestDynamicEnvelopeFaultInjection(unittest.TestCase):
                 == 1
                 and self.node.count_publishers(
                     "/safety/envelope_diagnostics"
+                )
+                == 1
+                and self.node.count_publishers(
+                    "/safety/lifecycle_status"
                 )
                 == 1
                 and self.node.count_publishers("/cmd_vel") == 1

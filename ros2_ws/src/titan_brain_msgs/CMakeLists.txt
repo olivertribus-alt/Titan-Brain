@@ -24,6 +24,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/SafetySupervisorStatus.msg"
   "msg/SystemFaultStatus.msg"
   "msg/EnvelopeDiagnostics.msg"
+  "msg/SafetyLifecycleStatus.msg"
   DEPENDENCIES builtin_interfaces geometry_msgs std_msgs
 )
 

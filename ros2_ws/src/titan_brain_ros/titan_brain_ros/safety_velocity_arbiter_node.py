@@ -23,6 +23,7 @@ from rclpy.qos import (
 from titan_brain_msgs.msg import (
     ArbitrationStatus,
     PermittedMotionEnvelope,
+    SafetyLifecycleStatus,
     SystemFaultStatus,
 )
 
@@ -45,6 +46,7 @@ TELEOP_COMMAND_TOPIC = "/teleop/cmd_vel"
 AUTONOMY_COMMAND_TOPIC = "/autonomy/cmd_vel"
 SYSTEM_FAULT_TOPIC = "/safety/system_fault_status"
 MOTION_ENVELOPE_TOPIC = "/safety/permitted_motion_envelope"
+SAFETY_LIFECYCLE_TOPIC = "/safety/lifecycle_status"
 OUTPUT_COMMAND_TOPIC = "/cmd_vel"
 ARBITRATION_STATUS_TOPIC = "/safety/arbitration_status"
 
@@ -86,6 +88,13 @@ def _required_text_parameter(node: Node, name: str, default: str) -> str:
     return value.strip()
 
 
+def _bool_parameter(node: Node, name: str, default: bool) -> bool:
+    value = node.declare_parameter(name, default).value
+    if not isinstance(value, bool):
+        raise ValueError(f"ROS parameter {name!r} must be boolean")
+    return value
+
+
 def _seconds_to_ns(value: float, *, name: str) -> int:
     result = round(value * NANOSECONDS_PER_SECOND)
     if result <= 0:
@@ -94,7 +103,12 @@ def _seconds_to_ns(value: float, *, name: str) -> int:
 
 
 def _stamp_ns(
-    message: TwistStamped | PermittedMotionEnvelope | SystemFaultStatus,
+    message: (
+        TwistStamped
+        | PermittedMotionEnvelope
+        | SafetyLifecycleStatus
+        | SystemFaultStatus
+    ),
 ) -> int:
     stamp = message.header.stamp
     return int(stamp.sec) * NANOSECONDS_PER_SECOND + int(stamp.nanosec)
@@ -147,6 +161,19 @@ class SafetyVelocityArbiterNode(Node):
         self._fault_timeout_ns = _seconds_to_ns(
             _finite_positive_parameter(self, "fault_timeout_sec", 0.20),
             name="fault_timeout_sec",
+        )
+        self._lifecycle_gate_enabled = _bool_parameter(
+            self,
+            "lifecycle_gate_enabled",
+            False,
+        )
+        self._lifecycle_timeout_ns = _seconds_to_ns(
+            _finite_positive_parameter(
+                self,
+                "lifecycle_timeout_sec",
+                0.05,
+            ),
+            name="lifecycle_timeout_sec",
         )
         self._arbitration_latency_budget_ns = _seconds_to_ns(
             _finite_positive_parameter(
@@ -204,6 +231,7 @@ class SafetyVelocityArbiterNode(Node):
         self._fault_state: SystemFaultState | None = None
         self._fault_timestamp_ns: int | None = None
         self._envelope: PermittedMotionEnvelope | None = None
+        self._lifecycle_status: SafetyLifecycleStatus | None = None
         self._last_selection: SelectionResult | None = None
         self._last_result: GovernorResult | None = None
         self._last_status: ArbitrationStatus | None = None
@@ -241,6 +269,12 @@ class SafetyVelocityArbiterNode(Node):
             PermittedMotionEnvelope,
             MOTION_ENVELOPE_TOPIC,
             self._on_motion_envelope,
+            safety_qos_profile(),
+        )
+        self._lifecycle_subscription = self.create_subscription(
+            SafetyLifecycleStatus,
+            SAFETY_LIFECYCLE_TOPIC,
+            self._on_lifecycle_status,
             safety_qos_profile(),
         )
         self._timer = self.create_timer(timer_period_sec, self._on_timer)
@@ -317,6 +351,9 @@ class SafetyVelocityArbiterNode(Node):
 
     def _on_motion_envelope(self, message: PermittedMotionEnvelope) -> None:
         self._envelope = message
+
+    def _on_lifecycle_status(self, message: SafetyLifecycleStatus) -> None:
+        self._lifecycle_status = message
 
     def _current_fault_state(
         self,
@@ -418,6 +455,75 @@ class SafetyVelocityArbiterNode(Node):
 
     def _governor_timestamp(self, now_ns: int) -> int:
         return max(now_ns, self._governor.last_timestamp_ns + 1)
+
+    def _clamp_with_lifecycle(
+        self,
+        linear: float,
+        angular: float,
+        now_ns: int,
+    ) -> tuple[float, float, str | None, bool]:
+        if not self._lifecycle_gate_enabled:
+            return linear, angular, None, False
+        status = self._lifecycle_status
+        if status is None:
+            return 0.0, 0.0, "SAFETY_LIFECYCLE_MISSING", False
+        timestamp_ns = _stamp_ns(status)
+        if str(status.header.frame_id).strip() != self._output_frame_id:
+            return 0.0, 0.0, "SAFETY_LIFECYCLE_FRAME_MISMATCH", False
+        if (
+            not str(status.schema_version).strip()
+            or not str(status.policy_version).strip()
+            or not str(status.correlation_id).strip()
+        ):
+            return 0.0, 0.0, "SAFETY_LIFECYCLE_INVALID", False
+        if timestamp_ns > now_ns:
+            return 0.0, 0.0, "SAFETY_LIFECYCLE_FUTURE_TIMESTAMP", False
+        if now_ns - timestamp_ns > self._lifecycle_timeout_ns:
+            return 0.0, 0.0, "SAFETY_LIFECYCLE_TIMEOUT", False
+        valid_states = {
+            SafetyLifecycleStatus.STATE_NORMAL,
+            SafetyLifecycleStatus.STATE_DEGRADED,
+            SafetyLifecycleStatus.STATE_RECOVERY,
+            SafetyLifecycleStatus.STATE_EMERGENCY_STOP,
+        }
+        if int(status.state) not in valid_states:
+            return 0.0, 0.0, "SAFETY_LIFECYCLE_INVALID", False
+        limits = (
+            float(status.max_linear_velocity_mps),
+            float(status.max_angular_velocity_radps),
+        )
+        if any(not math.isfinite(limit) or limit < 0.0 for limit in limits):
+            return 0.0, 0.0, "SAFETY_LIFECYCLE_INVALID", False
+        if int(status.state) == SafetyLifecycleStatus.STATE_EMERGENCY_STOP:
+            return 0.0, 0.0, "SAFETY_LIFECYCLE_EMERGENCY_STOP", False
+        recovery_expected = (
+            int(status.state) == SafetyLifecycleStatus.STATE_RECOVERY
+        )
+        if bool(status.recovery_active) is not recovery_expected:
+            return 0.0, 0.0, "SAFETY_LIFECYCLE_INVALID", False
+        if (
+            not bool(status.fault_status_valid)
+            or bool(status.is_faulted)
+            or not bool(status.sensor_valid)
+            or not bool(status.sensor_fresh)
+            or not bool(status.time_valid)
+        ):
+            return 0.0, 0.0, "SAFETY_LIFECYCLE_INVALID", False
+        max_linear, max_angular = limits
+        clamped_linear = max(-max_linear, min(max_linear, linear))
+        clamped_angular = max(-max_angular, min(max_angular, angular))
+        changed = clamped_linear != linear or clamped_angular != angular
+        state_name = {
+            SafetyLifecycleStatus.STATE_NORMAL: "NORMAL",
+            SafetyLifecycleStatus.STATE_DEGRADED: "DEGRADED",
+            SafetyLifecycleStatus.STATE_RECOVERY: "RECOVERY",
+        }[int(status.state)]
+        return (
+            clamped_linear,
+            clamped_angular,
+            f"SAFETY_LIFECYCLE_{state_name}_CLAMPED" if changed else None,
+            changed,
+        )
 
     def _publish_result(
         self,
@@ -570,6 +676,19 @@ class SafetyVelocityArbiterNode(Node):
                 reason=envelope_reason,
             )
             return
+        linear, angular, lifecycle_reason, lifecycle_changed = (
+            self._clamp_with_lifecycle(linear, angular, now_ns)
+        )
+        if lifecycle_reason is not None and not lifecycle_changed:
+            self._publish_emergency(
+                now_ns=now_ns,
+                selection=selection,
+                fault_state=fault_state,
+                reason=lifecycle_reason,
+            )
+            return
+        combined_reason = lifecycle_reason or envelope_reason
+        combined_changed = envelope_changed or lifecycle_changed
         result = self._governor.step(
             GovernorCommand(
                 linear_velocity_mps=linear,
@@ -582,13 +701,13 @@ class SafetyVelocityArbiterNode(Node):
             result,
             selection=selection,
             fault_state=fault_state,
-            rejection_reason=envelope_reason,
+            rejection_reason=combined_reason,
             mode=(
                 ArbitrationStatus.MODE_CLAMPED
-                if envelope_changed
+                if combined_changed
                 else ArbitrationStatus.MODE_PASS_THROUGH
             ),
-            reason=(envelope_reason or result.reason.value),
+            reason=(combined_reason or result.reason.value),
         )
 
 
@@ -628,6 +747,7 @@ __all__ = [
     "AUTONOMY_COMMAND_TOPIC",
     "MOTION_ENVELOPE_TOPIC",
     "OUTPUT_COMMAND_TOPIC",
+    "SAFETY_LIFECYCLE_TOPIC",
     "SYSTEM_FAULT_TOPIC",
     "SafetyVelocityArbiterNode",
     "SafetyVelocityArbiterRosNode",

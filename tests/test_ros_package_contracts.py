@@ -224,6 +224,34 @@ def test_titan_brain_message_contracts_are_explicit() -> None:
         "float64 max_linear_velocity_mps",
         "float64 max_angular_velocity_radps",
     ]
+    assert _message_fields(messages / "SafetyLifecycleStatus.msg") == [
+        "uint8 STATE_NORMAL=0",
+        "uint8 STATE_DEGRADED=1",
+        "uint8 STATE_RECOVERY=2",
+        "uint8 STATE_EMERGENCY_STOP=3",
+        "std_msgs/Header header",
+        "string schema_version",
+        "string policy_version",
+        "string correlation_id",
+        "uint64 sequence_id",
+        "uint8 state",
+        "string reason",
+        "bool fault_status_valid",
+        "bool is_faulted",
+        "bool sensor_valid",
+        "bool sensor_fresh",
+        "bool time_valid",
+        "bool noncritical_warning",
+        "bool recovery_active",
+        "float64 distance_min_m",
+        "float64 stop_margin_m",
+        "float64 warning_distance_m",
+        "float64 normal_release_distance_m",
+        "uint64 recovery_elapsed_ns",
+        "uint64 recovery_dwell_time_ns",
+        "float64 max_linear_velocity_mps",
+        "float64 max_angular_velocity_radps",
+    ]
     assert _message_fields(messages / "CommandPathObservabilityStatus.msg") == [
         "std_msgs/Header header",
         "string schema_version",
@@ -347,6 +375,7 @@ def test_message_package_declares_rosidl_and_message_dependencies() -> None:
     assert '"msg/SafetySupervisorStatus.msg"' in cmake
     assert '"msg/SystemFaultStatus.msg"' in cmake
     assert '"msg/EnvelopeDiagnostics.msg"' in cmake
+    assert '"msg/SafetyLifecycleStatus.msg"' in cmake
 
 
 def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
@@ -379,6 +408,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert "titan_brain_ros.command_governor_node:main" in setup
     assert "titan_brain_ros.safety_velocity_arbiter_node:main" in setup
     assert "titan_brain_ros.dynamic_envelope_node:main" in setup
+    assert "titan_brain_ros.safety_recovery_manager_node:main" in setup
     assert (package / "resource" / "titan_brain_ros").is_file()
     assert (
         package / "titan_brain_ros" / "safety_observation_node.py"
@@ -404,6 +434,9 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert (
         package / "titan_brain_ros" / "dynamic_envelope_node.py"
     ).is_file()
+    assert (
+        package / "titan_brain_ros" / "safety_recovery_manager_node.py"
+    ).is_file()
     shared_config = package / "config" / "titan_brain.yaml"
     launch_file = package / "launch" / "titan_brain.launch.py"
     e2e_test = package / "test" / "test_e2e_transport.py"
@@ -425,6 +458,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     safety_launch_text = safety_launch_file.read_text(encoding="utf-8")
     assert 'executable="safety_velocity_arbiter_node"' in safety_launch_text
     assert 'executable="dynamic_envelope_node"' in safety_launch_text
+    assert 'executable="safety_recovery_manager_node"' in safety_launch_text
     assert 'executable="velocity_arbiter_node"' not in safety_launch_text
     assert 'executable="command_governor_node"' not in safety_launch_text
     assert '{"publish_motion_envelope": False}' in safety_launch_text
@@ -494,11 +528,22 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
         "max_linear_jerk_mps3",
         "max_angular_jerk_radps3",
         "envelope_timeout_sec",
+        "lifecycle_gate_enabled",
+        "lifecycle_timeout_sec",
         "sensor_timeout_sec",
         "front_sector_deg",
         "max_scan_samples",
         "angular_swept_radius_m",
         "fault_timeout_sec",
+        "diagnostics_timeout_sec",
+        "stop_margin_m",
+        "warning_distance_m",
+        "distance_hysteresis_m",
+        "recovery_dwell_time_sec",
+        "degraded_linear_speed_limit_mps",
+        "degraded_angular_speed_limit_radps",
+        "recovery_linear_speed_limit_mps",
+        "recovery_angular_speed_limit_radps",
         "arbitration_latency_budget_sec",
         "policy_version",
     ):
@@ -526,6 +571,16 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert _float_parameter(config_text, "warning_max_abs_linear_y") == 0.1
     assert _float_parameter(config_text, "warning_max_abs_angular_z") == 0.5
     assert _float_parameter(config_text, "arbitration_latency_budget_sec") == 0.03
+    assert "lifecycle_gate_enabled: true" in config_text
+    assert _float_parameter(config_text, "lifecycle_timeout_sec") == 0.05
+    assert _float_parameter(config_text, "stop_margin_m") == 0.30
+    assert _float_parameter(config_text, "warning_distance_m") == 1.00
+    assert _float_parameter(config_text, "distance_hysteresis_m") == 0.10
+    assert _float_parameter(config_text, "recovery_dwell_time_sec") == 1.00
+    assert (
+        _float_parameter(config_text, "recovery_linear_speed_limit_mps")
+        == 0.20
+    )
     assert _float_parameter(config_text, "observation_to_command_budget_sec") == 0.10
     assert '"config/titan_brain.yaml"' in setup
     assert '"launch/titan_brain.launch.py"' in setup

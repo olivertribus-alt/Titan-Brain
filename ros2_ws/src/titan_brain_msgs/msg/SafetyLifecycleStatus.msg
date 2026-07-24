@@ -1,0 +1,27 @@
+# TB-EVAL-009A recovery and degradation lifecycle authority.
+uint8 STATE_NORMAL=0
+uint8 STATE_DEGRADED=1
+uint8 STATE_RECOVERY=2
+uint8 STATE_EMERGENCY_STOP=3
+std_msgs/Header header
+string schema_version
+string policy_version
+string correlation_id
+uint64 sequence_id
+uint8 state
+string reason
+bool fault_status_valid
+bool is_faulted
+bool sensor_valid
+bool sensor_fresh
+bool time_valid
+bool noncritical_warning
+bool recovery_active
+float64 distance_min_m
+float64 stop_margin_m
+float64 warning_distance_m
+float64 normal_release_distance_m
+uint64 recovery_elapsed_ns
+uint64 recovery_dwell_time_ns
+float64 max_linear_velocity_mps
+float64 max_angular_velocity_radps

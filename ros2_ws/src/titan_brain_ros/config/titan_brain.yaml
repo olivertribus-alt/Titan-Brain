@@ -93,6 +93,8 @@ safety_velocity_arbiter_node:
     envelope_timeout_sec: 0.05
     fault_timeout_sec: 0.20
     arbitration_latency_budget_sec: 0.03
+    lifecycle_gate_enabled: true
+    lifecycle_timeout_sec: 0.05
     timer_period_sec: 0.02
     max_linear_velocity_mps: 1.0
     max_angular_velocity_radps: 1.0
@@ -119,3 +121,19 @@ dynamic_envelope_node:
     nominal_angular_velocity_radps: 1.0
     angular_swept_radius_m: 0.45
     confidence_threshold: 0.5
+
+safety_recovery_manager_node:
+  ros__parameters:
+    policy_version: "TB-EVAL-009A-0.1.0"
+    output_frame_id: "base_link"
+    timer_period_sec: 0.02
+    diagnostics_timeout_sec: 0.20
+    fault_timeout_sec: 0.20
+    stop_margin_m: 0.30
+    warning_distance_m: 1.00
+    distance_hysteresis_m: 0.10
+    recovery_dwell_time_sec: 1.00
+    degraded_linear_speed_limit_mps: 0.50
+    degraded_angular_speed_limit_radps: 0.50
+    recovery_linear_speed_limit_mps: 0.20
+    recovery_angular_speed_limit_radps: 0.50
