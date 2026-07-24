@@ -3,13 +3,14 @@
 import time
 
 import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import LaserScan
+from std_msgs.msg import Float32, String
+
 from core.multi_sensor_envelope import (
     MultiSensorEnvelopeEvaluator,
     SensorReading,
 )
-from rclpy.node import Node
-from sensor_msgs.msg import LaserScan
-from std_msgs.msg import Float32, String
 
 
 class MultiSensorEnvelopeNode(Node):
@@ -40,17 +41,13 @@ class MultiSensorEnvelopeNode(Node):
         self.fused_dist_pub = self.create_publisher(
             Float32, "/safety/fused_min_distance", 10
         )
-        self.diag_pub = self.create_publisher(
-            String, "/safety/fusion_diagnostics", 10
-        )
+        self.diag_pub = self.create_publisher(String, "/safety/fusion_diagnostics", 10)
 
         timer_period = 1.0 / rate_hz
         self.timer = self.create_timer(timer_period, self._evaluate_loop)
 
     def _scan_callback(self, msg: LaserScan) -> None:
-        valid_ranges = [
-            r for r in msg.ranges if msg.range_min <= r <= msg.range_max
-        ]
+        valid_ranges = [r for r in msg.ranges if msg.range_min <= r <= msg.range_max]
         min_dist = min(valid_ranges) if valid_ranges else float("inf")
 
         now_s = time.time()

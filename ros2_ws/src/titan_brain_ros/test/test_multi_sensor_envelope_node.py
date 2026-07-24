@@ -1,16 +1,17 @@
 """Integration test for ROS 2 Multi-Sensor Envelope Node."""
 
 import unittest
+
 import pytest
 
 rclpy = pytest.importorskip("rclpy")
+
 from titan_brain_ros.multi_sensor_envelope_node import (  # noqa: E402
     MultiSensorEnvelopeNode,
 )
 
 
 class TestMultiSensorEnvelopeNode(unittest.TestCase):
-
     @classmethod
     def setUpClass(cls) -> None:
         rclpy.init()

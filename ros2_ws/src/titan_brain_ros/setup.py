@@ -7,7 +7,10 @@ setup(
     version="0.1.0",
     packages=find_packages(exclude=["test"]),
     data_files=[
-        ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
+        (
+            "share/ament_index/resource_index/packages",
+            ["resource/" + package_name],
+        ),
         ("share/" + package_name, ["package.xml"]),
         (
             "share/" + package_name + "/launch",
@@ -24,11 +27,23 @@ setup(
     tests_require=["pytest"],
     entry_points={
         "console_scripts": [
-            "safety_velocity_arbiter_node = titan_brain_ros.safety_velocity_arbiter_node:main",
-            "dynamic_motion_envelope_node = titan_brain_ros.dynamic_motion_envelope_node:main",
-            "safety_recovery_manager_node = titan_brain_ros.safety_recovery_manager_node:main",
-            "telemetry_blackbox_node = titan_brain_ros.telemetry_blackbox_node:main",
-            "multi_sensor_envelope_node = titan_brain_ros.multi_sensor_envelope_node:main",
+            (
+                "safety_velocity_arbiter_node = "
+                "titan_brain_ros.safety_velocity_arbiter_node:main"
+            ),
+            (
+                "dynamic_motion_envelope_node = "
+                "titan_brain_ros.dynamic_motion_envelope_node:main"
+            ),
+            (
+                "safety_recovery_manager_node = "
+                "titan_brain_ros.safety_recovery_manager_node:main"
+            ),
+            ("telemetry_blackbox_node = titan_brain_ros.telemetry_blackbox_node:main"),
+            (
+                "multi_sensor_envelope_node = "
+                "titan_brain_ros.multi_sensor_envelope_node:main"
+            ),
         ],
     },
 )
