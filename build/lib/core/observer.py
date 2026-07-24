@@ -12,9 +12,7 @@ from core.types.payload import BasePayload
 class BusObserver(Protocol):
     """Asynchronous observer isolated from the dispatch critical path."""
 
-    async def on_message_received(
-        self, message: CognitiveMessage[BasePayload]
-    ) -> None:
+    async def on_message_received(self, message: CognitiveMessage[BasePayload]) -> None:
         """Observe a message after envelope and payload validation."""
 
     async def on_dispatch_complete(

@@ -6,21 +6,19 @@ from __future__ import annotations
 from pathlib import Path
 
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
-    KeepTogether,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
     Table,
     TableStyle,
 )
-
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_PATH = ROOT / "output" / "pdf" / "TB-ACT-001_Executive_Summary.pdf"
@@ -231,12 +229,24 @@ def build_story(styles: dict[str, ParagraphStyle]) -> list[object]:
     meta = Table(
         [
             [
-                _p('<font color="#64748b">PROJEKT / MODUL</font><br/><b>Titan Brain / Actuator Control Plane</b>', body),
-                _p('<font color="#64748b">DATUM VERIFIKACE</font><br/><b>22. července 2026</b>', body),
+                _p(
+                    '<font color="#64748b">PROJEKT / MODUL</font><br/><b>Titan Brain / Actuator Control Plane</b>',
+                    body,
+                ),
+                _p(
+                    '<font color="#64748b">DATUM VERIFIKACE</font><br/><b>22. července 2026</b>',
+                    body,
+                ),
             ],
             [
-                _p('<font color="#64748b">CÍLOVÉ PROSTŘEDÍ</font><br/><b>ROS 2 Jazzy / Python 3.11 &amp; 3.12</b>', body),
-                _p('<font color="#64748b">STAV</font><br/><b>PASSED - lokální gates</b>', body),
+                _p(
+                    '<font color="#64748b">CÍLOVÉ PROSTŘEDÍ</font><br/><b>ROS 2 Jazzy / Python 3.11 &amp; 3.12</b>',
+                    body,
+                ),
+                _p(
+                    '<font color="#64748b">STAV</font><br/><b>PASSED - lokální gates</b>',
+                    body,
+                ),
             ],
         ],
         colWidths=[87 * mm, 87 * mm],
@@ -266,25 +276,37 @@ def build_story(styles: dict[str, ParagraphStyle]) -> list[object]:
         [
             _p("001A", styles["table_bold"]),
             _p("Actuator Feedback Core &amp; Math", table),
-            _p("Immutable kontrakt, stop threshold (|v| ≤ ε), fail-closed validace stale a NaN dat.", table),
+            _p(
+                "Immutable kontrakt, stop threshold (|v| ≤ ε), fail-closed validace stale a NaN dat.",
+                table,
+            ),
             _badge("PASSED", styles["badge"]),
         ],
         [
             _p("001B", styles["table_bold"]),
             _p("Stop Ack Monitor &amp; Latching", table),
-            _p("Timeouty (t<sub>stop_budget</sub>), sticky HARDWARE_FAULT_LATCH, explicitní reset protokol.", table),
+            _p(
+                "Timeouty (t<sub>stop_budget</sub>), sticky HARDWARE_FAULT_LATCH, explicitní reset protokol.",
+                table,
+            ),
             _badge("PASSED", styles["badge"]),
         ],
         [
             _p("001C", styles["table_bold"]),
             _p("ROS 2 Actuator Integration", table),
-            _p("ROS 2 zprávy, feedback monitor node, QoS a fail-closed diagnostický výstup.", table),
+            _p(
+                "ROS 2 zprávy, feedback monitor node, QoS a fail-closed diagnostický výstup.",
+                table,
+            ),
             _badge("PASSED", styles["badge"]),
         ],
         [
             _p("001D", styles["table_bold"]),
             _p("Fault Injection &amp; ROS Jazzy E2E", table),
-            _p("Ochrana proti spurious movement, desynchronizaci correlation ID, sequence gap a replay.", table),
+            _p(
+                "Ochrana proti spurious movement, desynchronizaci correlation ID, sequence gap a replay.",
+                table,
+            ),
             _badge("PASSED", styles["badge"]),
         ],
     ]
@@ -314,7 +336,12 @@ def build_story(styles: dict[str, ParagraphStyle]) -> list[object]:
         [
             [_p("VÝSLEDKY TESTOVACÍ SADY A POKRYTÍ KÓDU", styles["metric_title"])],
             [_p("424 / 424 testů passed", styles["metric_value"])],
-            [_p("Celkové coverage: <b>96,67 %</b> | Core actuator feedback a stop monitor: <b>100 %</b> statement &amp; branch coverage.<br/>Statická analýza: <b>Ruff a strict Mypy clean</b> (0 nálezů).", styles["small"])],
+            [
+                _p(
+                    "Celkové coverage: <b>96,67 %</b> | Core actuator feedback a stop monitor: <b>100 %</b> statement &amp; branch coverage.<br/>Statická analýza: <b>Ruff a strict Mypy clean</b> (0 nálezů).",
+                    styles["small"],
+                )
+            ],
         ],
         colWidths=[177 * mm],
         style=TableStyle(
@@ -330,7 +357,9 @@ def build_story(styles: dict[str, ParagraphStyle]) -> list[object]:
     )
     story.append(metric)
 
-    story.append(_p("3. Bezpečnostní garance a fail-closed architektura", styles["section"]))
+    story.append(
+        _p("3. Bezpečnostní garance a fail-closed architektura", styles["section"])
+    )
     bullets = [
         "<b>Sticky Hardware Latch:</b> Při selhání zastavení nebo nekontrolovaném pohybu po STOP se monitor dostane do nekompromisního západkového stavu.",
         "<b>Auditní návratové kódy:</b> Systém zachovává přesný diagnostický důvod (timeout, stale data, sequence/correlation desynchronizace) v immutable protokolu.",

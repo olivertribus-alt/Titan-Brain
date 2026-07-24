@@ -54,9 +54,7 @@ def _format_evidence(decision: DecisionEvidence) -> list[str]:
 
 def format_decision_replay(decision: DecisionEvidence) -> str:
     """Render one decision using the stable v0.2 human diagnostic layout."""
-    timestamp = decision.occurred_at_datetime.strftime(
-        "%Y-%m-%d %H:%M:%S.%f UTC"
-    )
+    timestamp = decision.occurred_at_datetime.strftime("%Y-%m-%d %H:%M:%S.%f UTC")
     if decision.spatial_context is None:
         location = "unavailable"
     else:
