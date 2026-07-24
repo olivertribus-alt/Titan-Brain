@@ -48,6 +48,8 @@ setup(
             "titan_brain_ros.dynamic_envelope_node:main",
             "safety_recovery_manager_node = "
             "titan_brain_ros.safety_recovery_manager_node:main",
+            "telemetry_blackbox_node = "
+            "titan_brain_ros.telemetry_blackbox_node:main",
         ],
     },
 )

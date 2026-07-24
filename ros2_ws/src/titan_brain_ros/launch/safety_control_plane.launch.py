@@ -1,4 +1,4 @@
-"""Launch the 007B/008B/009A safety control plane."""
+"""Launch the 007B/008B/009A/009B safety control plane."""
 
 from pathlib import Path
 
@@ -45,6 +45,13 @@ def generate_launch_description() -> LaunchDescription:
                 package=_PACKAGE_NAME,
                 executable="safety_recovery_manager_node",
                 name="safety_recovery_manager_node",
+                parameters=[config_file],
+                output="screen",
+            ),
+            Node(
+                package=_PACKAGE_NAME,
+                executable="telemetry_blackbox_node",
+                name="telemetry_blackbox_node",
                 parameters=[config_file],
                 output="screen",
             ),

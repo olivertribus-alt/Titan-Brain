@@ -168,11 +168,11 @@ class TestDynamicEnvelopeFaultInjection(unittest.TestCase):
     def _wait_for_graph(self) -> None:
         self._spin_until(
             lambda: (
-                self.node.count_subscribers("/teleop/cmd_vel") == 1
+                self.node.count_subscribers("/teleop/cmd_vel") == 2
                 and self.node.count_subscribers(
                     "/safety/system_fault_status"
                 )
-                == 3
+                == 4
                 and self.node.count_subscribers("/scan") == 1
                 and self.node.count_publishers(
                     "/safety/permitted_motion_envelope"
