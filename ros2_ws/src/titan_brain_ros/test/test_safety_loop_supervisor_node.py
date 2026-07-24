@@ -107,9 +107,7 @@ def test_healthy_matrix_closes_relay_after_physical_feedback() -> None:
         assert node.last_result is not None
         assert node.last_result.state.value == "ok"
         assert node.last_status is not None
-        assert node.last_status.supervisor_state == (
-            node.last_status.STATE_OK
-        )
+        assert node.last_status.supervisor_state == (node.last_status.STATE_OK)
         assert node.last_status.relay_closed_request is True
         assert node.last_relay_command is not None
         assert node.last_relay_command.commanded_state == (
@@ -177,9 +175,7 @@ def test_driver_latch_is_propagated_without_automatic_release() -> None:
     rclpy.init()
     node = _new_node()
     try:
-        node._on_relay_status(
-            _relay(SafetyRelayStatus.FEEDBACK_OPEN, is_latched=True)
-        )
+        node._on_relay_status(_relay(SafetyRelayStatus.FEEDBACK_OPEN, is_latched=True))
         node._on_control_heartbeat(_heartbeat("control_arbiter"))
         assert node.last_result is not None
         assert node.last_result.state.value == "hardware_fault_latch"

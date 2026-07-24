@@ -60,9 +60,7 @@ def generate_test_description() -> LaunchDescription:
     launch_file = package_share / "launch" / "safety_control_plane.launch.py"
     return LaunchDescription(
         [
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(str(launch_file))
-            ),
+            IncludeLaunchDescription(PythonLaunchDescriptionSource(str(launch_file))),
             launch_testing.actions.ReadyToTest(),
         ]
     )
@@ -133,19 +131,10 @@ class TestSafetyVelocityArbiterReplay(unittest.TestCase):
             lambda: (
                 self.node.count_subscribers("/teleop/cmd_vel") == 2
                 and self.node.count_subscribers("/autonomy/cmd_vel") == 2
-                and self.node.count_subscribers(
-                    "/safety/system_fault_status"
-                )
-                == 4
+                and self.node.count_subscribers("/safety/system_fault_status") == 4
                 and self.node.count_subscribers("/scan") == 1
-                and self.node.count_publishers(
-                    "/safety/permitted_motion_envelope"
-                )
-                == 1
-                and self.node.count_publishers(
-                    "/safety/lifecycle_status"
-                )
-                == 1
+                and self.node.count_publishers("/safety/permitted_motion_envelope") == 1
+                and self.node.count_publishers("/safety/lifecycle_status") == 1
                 and self.node.count_publishers("/cmd_vel") == 1
             ),
             _DISCOVERY_TIMEOUT_SEC,
@@ -218,9 +207,7 @@ class TestSafetyVelocityArbiterReplay(unittest.TestCase):
         self.statuses.clear()
         deadline = time.monotonic() + _SCENARIO_TIMEOUT_SEC
         while time.monotonic() < deadline:
-            self._publish_replay_frame(
-                SystemFaultStatus.FAULT_E_STOP_ACTIVE
-            )
+            self._publish_replay_frame(SystemFaultStatus.FAULT_E_STOP_ACTIVE)
             rclpy.spin_once(self.node, timeout_sec=0.02)
             if any(
                 status.rejection_reason == "SYSTEM_FAULT_E_STOP_ACTIVE"

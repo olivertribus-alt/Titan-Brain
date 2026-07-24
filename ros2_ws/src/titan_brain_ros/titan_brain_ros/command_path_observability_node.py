@@ -75,18 +75,16 @@ def _seconds_to_ns(value: float, *, name: str) -> int:
 
 
 def _message_stamp_ns(message: ArbitrationStatusMsg) -> int:
-    return (
-        int(message.header.stamp.sec) * _NANOSECONDS_PER_SECOND
-        + int(message.header.stamp.nanosec)
+    return int(message.header.stamp.sec) * _NANOSECONDS_PER_SECOND + int(
+        message.header.stamp.nanosec
     )
 
 
 def _evaluator_message_stamp_ns(
     message: EvaluatorObservabilityStatusMsg,
 ) -> int:
-    return (
-        int(message.header.stamp.sec) * _NANOSECONDS_PER_SECOND
-        + int(message.header.stamp.nanosec)
+    return int(message.header.stamp.sec) * _NANOSECONDS_PER_SECOND + int(
+        message.header.stamp.nanosec
     )
 
 
@@ -194,9 +192,7 @@ class CommandPathObservabilityNode(Node):
             int(message.end_to_end_ns),
         )
         if timing_valid:
-            observation_ns, received_ns, decision_ns, published_ns = (
-                timing_values[:4]
-            )
+            observation_ns, received_ns, decision_ns, published_ns = timing_values[:4]
             expected_latencies = (
                 received_ns - observation_ns,
                 decision_ns - received_ns,
@@ -235,9 +231,7 @@ class CommandPathObservabilityNode(Node):
             latency_status=latency_status,
             timing_valid=timing_valid,
             observation_timestamp_ns=(
-                int(message.observation_timestamp_ns)
-                if timing_valid
-                else None
+                int(message.observation_timestamp_ns) if timing_valid else None
             ),
             published_timestamp_ns=(
                 int(message.published_timestamp_ns) if timing_valid else None
@@ -261,8 +255,7 @@ class CommandPathObservabilityNode(Node):
         timing = measure_arbitration_latency(
             intent_received_ns=(
                 None
-                if transmitted_status == "invalid_timing"
-                and received_timestamp == 0
+                if transmitted_status == "invalid_timing" and received_timestamp == 0
                 else received_timestamp
             ),
             command_published_ns=int(message.command_published_timestamp_ns),
@@ -342,9 +335,7 @@ class CommandPathObservabilityNode(Node):
         message.evaluator_published_timestamp_ns = (
             report.evaluator_published_timestamp_ns or 0
         )
-        message.intent_received_timestamp_ns = (
-            report.intent_received_timestamp_ns or 0
-        )
+        message.intent_received_timestamp_ns = report.intent_received_timestamp_ns or 0
         message.command_published_timestamp_ns = (
             report.command_published_timestamp_ns or 0
         )

@@ -74,10 +74,7 @@ class SafetyRecoveryConfig(StrictFrozenModel):
             raise ValueError("warning distance must exceed the stop margin")
         if not math.isfinite(self.normal_release_distance_m):
             raise ValueError("normal release distance must be finite")
-        if (
-            self.recovery_linear_speed_limit_mps
-            > self.degraded_linear_speed_limit_mps
-        ):
+        if self.recovery_linear_speed_limit_mps > self.degraded_linear_speed_limit_mps:
             raise ValueError(
                 "recovery linear speed limit must not exceed degraded limit"
             )
@@ -173,10 +170,7 @@ class SafetyLifecycleTransition(StrictFrozenModel):
                 != self.evaluated_at_ns - self.recovery_started_at_ns
             ):
                 raise ValueError("recovery elapsed time must match timestamps")
-        elif (
-            self.recovery_started_at_ns is not None
-            or self.recovery_elapsed_ns != 0
-        ):
+        elif self.recovery_started_at_ns is not None or self.recovery_elapsed_ns != 0:
             raise ValueError("stable states must not retain recovery timer")
         return self
 
@@ -347,8 +341,7 @@ def transition_safety_lifecycle(
     if requires_recovery:
         recovery_started_at_ns = (
             previous.recovery_started_at_ns
-            if previous is not None
-            and previous.state is SafetyLifecycleState.RECOVERY
+            if previous is not None and previous.state is SafetyLifecycleState.RECOVERY
             else checked_now_ns
         )
         if recovery_started_at_ns is None:

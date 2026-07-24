@@ -57,9 +57,7 @@ def _finite_float_parameter(
     lower_bound_ok = checked >= 0.0 if allow_zero else checked > 0.0
     if not math.isfinite(checked) or not lower_bound_ok:
         qualifier = "non-negative" if allow_zero else "positive"
-        raise ValueError(
-            f"ROS parameter {name!r} must be finite and {qualifier}"
-        )
+        raise ValueError(f"ROS parameter {name!r} must be finite and {qualifier}")
     return checked
 
 
@@ -78,9 +76,8 @@ def _seconds_to_ns(seconds: float, *, name: str) -> int:
 
 
 def _stamp_ns(message: EnvelopeDiagnostics | SystemFaultStatus) -> int:
-    return (
-        int(message.header.stamp.sec) * NANOSECONDS_PER_SECOND
-        + int(message.header.stamp.nanosec)
+    return int(message.header.stamp.sec) * NANOSECONDS_PER_SECOND + int(
+        message.header.stamp.nanosec
     )
 
 
@@ -264,10 +261,7 @@ class SafetyRecoveryManagerNode(Node):
         if message is None:
             return False, False
         timestamp_ns = _stamp_ns(message)
-        if (
-            timestamp_ns > now_ns
-            or now_ns - timestamp_ns > self._fault_timeout_ns
-        ):
+        if timestamp_ns > now_ns or now_ns - timestamp_ns > self._fault_timeout_ns:
             return False, False
         fault_state = int(message.fault_state)
         valid_states = {
@@ -297,15 +291,13 @@ class SafetyRecoveryManagerNode(Node):
         timestamp_ns = _stamp_ns(diagnostics)
         timestamp_valid = timestamp_ns <= now_ns
         message_fresh = (
-            timestamp_valid
-            and now_ns - timestamp_ns <= self._diagnostics_timeout_ns
+            timestamp_valid and now_ns - timestamp_ns <= self._diagnostics_timeout_ns
         )
         scan_age_sec = float(diagnostics.scan_age_sec)
         scan_age_valid = (
             math.isfinite(scan_age_sec)
             and scan_age_sec >= 0.0
-            and scan_age_sec
-            <= self._diagnostics_timeout_ns / NANOSECONDS_PER_SECOND
+            and scan_age_sec <= self._diagnostics_timeout_ns / NANOSECONDS_PER_SECOND
         )
         distances = (
             float(diagnostics.distance_forward_m),
@@ -316,26 +308,19 @@ class SafetyRecoveryManagerNode(Node):
             float(diagnostics.max_angular_velocity_radps),
         )
         numeric_valid = all(
-            math.isfinite(value) and value >= 0.0
-            for value in distances + velocities
+            math.isfinite(value) and value >= 0.0 for value in distances + velocities
         )
-        fail_closed = (
-            int(diagnostics.state) == EnvelopeDiagnostics.STATE_FAIL_CLOSED
-        )
+        fail_closed = int(diagnostics.state) == EnvelopeDiagnostics.STATE_FAIL_CLOSED
         timing_reason = (
             int(diagnostics.limiting_zone) == EnvelopeDiagnostics.ZONE_TIMING
             or "CLOCK" in str(diagnostics.reason).upper()
             or "TIME_REGRESSION" in str(diagnostics.reason).upper()
         )
         time_valid = (
-            timestamp_valid
-            and not timing_reason
-            and not self._timing_fault_latched
+            timestamp_valid and not timing_reason and not self._timing_fault_latched
         )
         sensor_valid = (
-            bool(diagnostics.scan_valid)
-            and numeric_valid
-            and not fail_closed
+            bool(diagnostics.scan_valid) and numeric_valid and not fail_closed
         )
         sensor_fresh = sensor_valid and message_fresh and scan_age_valid
         distance_min_m = min(distances) if sensor_valid else None
@@ -351,12 +336,8 @@ class SafetyRecoveryManagerNode(Node):
                 int(diagnostics.state) == EnvelopeDiagnostics.STATE_LIMITED
             ),
             distance_min_m=distance_min_m,
-            max_linear_velocity_mps=(
-                velocities[0] if numeric_valid else 0.0
-            ),
-            max_angular_velocity_radps=(
-                velocities[1] if numeric_valid else 0.0
-            ),
+            max_linear_velocity_mps=(velocities[0] if numeric_valid else 0.0),
+            max_angular_velocity_radps=(velocities[1] if numeric_valid else 0.0),
         )
 
     def _on_timer(self) -> None:
@@ -378,8 +359,7 @@ class SafetyRecoveryManagerNode(Node):
         diagnostics = self._latest_diagnostics
         correlation_id = (
             str(diagnostics.correlation_id)
-            if diagnostics is not None
-            and str(diagnostics.correlation_id).strip()
+            if diagnostics is not None and str(diagnostics.correlation_id).strip()
             else f"safety-lifecycle-{self._sequence_id}"
         )
         config = self._manager.config
@@ -394,9 +374,7 @@ class SafetyRecoveryManagerNode(Node):
         status.sequence_id = self._sequence_id
         status.state = {
             SafetyLifecycleState.NORMAL: SafetyLifecycleStatus.STATE_NORMAL,
-            SafetyLifecycleState.DEGRADED: (
-                SafetyLifecycleStatus.STATE_DEGRADED
-            ),
+            SafetyLifecycleState.DEGRADED: (SafetyLifecycleStatus.STATE_DEGRADED),
             SafetyLifecycleState.RECOVERY: SafetyLifecycleStatus.STATE_RECOVERY,
             SafetyLifecycleState.EMERGENCY_STOP: (
                 SafetyLifecycleStatus.STATE_EMERGENCY_STOP
@@ -409,25 +387,17 @@ class SafetyRecoveryManagerNode(Node):
         status.sensor_fresh = evidence.sensor_fresh
         status.time_valid = evidence.time_valid
         status.noncritical_warning = evidence.noncritical_warning
-        status.recovery_active = (
-            transition.state is SafetyLifecycleState.RECOVERY
-        )
+        status.recovery_active = transition.state is SafetyLifecycleState.RECOVERY
         status.distance_min_m = (
-            transition.distance_min_m
-            if transition.distance_min_m is not None
-            else -1.0
+            transition.distance_min_m if transition.distance_min_m is not None else -1.0
         )
         status.stop_margin_m = config.stop_margin_m
         status.warning_distance_m = config.warning_distance_m
         status.normal_release_distance_m = config.normal_release_distance_m
         status.recovery_elapsed_ns = transition.recovery_elapsed_ns
         status.recovery_dwell_time_ns = config.recovery_dwell_time_ns
-        status.max_linear_velocity_mps = (
-            transition.max_linear_velocity_mps
-        )
-        status.max_angular_velocity_radps = (
-            transition.max_angular_velocity_radps
-        )
+        status.max_linear_velocity_mps = transition.max_linear_velocity_mps
+        status.max_angular_velocity_radps = transition.max_angular_velocity_radps
         self._status_publisher.publish(status)
         self._last_status = status
 

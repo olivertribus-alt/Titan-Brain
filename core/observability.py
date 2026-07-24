@@ -42,8 +42,7 @@ class EvaluatorObservabilityConfig(StrictFrozenModel):
     def validate_end_to_end_budget(self) -> Self:
         """Ensure the aggregate budget covers both measured processing stages."""
         minimum = (
-            self.receive_to_decision_budget_ns
-            + self.decision_to_publish_budget_ns
+            self.receive_to_decision_budget_ns + self.decision_to_publish_budget_ns
         )
         if self.end_to_end_budget_ns < minimum:
             raise ValueError("end_to_end_budget_ns must cover both stage budgets")
@@ -218,9 +217,7 @@ class EvaluatorObservability:
 
     def __init__(
         self,
-        config: EvaluatorObservabilityConfig = (
-            DEFAULT_EVALUATOR_OBSERVABILITY_CONFIG
-        ),
+        config: EvaluatorObservabilityConfig = (DEFAULT_EVALUATOR_OBSERVABILITY_CONFIG),
     ) -> None:
         self._config = config
         self._counters = EvaluationCounters(
@@ -286,15 +283,9 @@ class EvaluatorObservability:
                 decision_to_publish = published_ns - decided_ns
                 end_to_end = published_ns - observation_ns
                 exceeded_list: list[str] = []
-                if (
-                    receive_to_decision
-                    > self._config.receive_to_decision_budget_ns
-                ):
+                if receive_to_decision > self._config.receive_to_decision_budget_ns:
                     exceeded_list.append("receive_to_decision")
-                if (
-                    decision_to_publish
-                    > self._config.decision_to_publish_budget_ns
-                ):
+                if decision_to_publish > self._config.decision_to_publish_budget_ns:
                     exceeded_list.append("decision_to_publish")
                 if end_to_end > self._config.end_to_end_budget_ns:
                     exceeded_list.append("end_to_end")
@@ -330,10 +321,13 @@ class EvaluatorObservability:
             ),
             invalid_timing=(
                 self._counters.invalid_timing
-                + (latency_status in {
-                    LatencyStatus.CLOCK_REGRESSION,
-                    LatencyStatus.INVALID_TIMESTAMP,
-                })
+                + (
+                    latency_status
+                    in {
+                        LatencyStatus.CLOCK_REGRESSION,
+                        LatencyStatus.INVALID_TIMESTAMP,
+                    }
+                )
             ),
         )
         correlation_id = _correlation_id(

@@ -191,9 +191,7 @@ def test_startup_is_fail_closed_and_has_single_envelope_publisher() -> None:
         assert node.last_envelope.max_linear_x_mps == 0.0
         assert node.last_envelope.max_angular_z_radps == 0.0
         assert node.last_diagnostics is not None
-        assert (
-            node.last_diagnostics.reason == "SYSTEM_FAULT_STATUS_MISSING"
-        )
+        assert node.last_diagnostics.reason == "SYSTEM_FAULT_STATUS_MISSING"
         assert node.count_publishers("/safety/permitted_motion_envelope") == 1
         assert node.count_publishers("/safety/envelope_diagnostics") == 1
         assert node.count_subscribers("/scan") == 1
@@ -240,8 +238,7 @@ def test_close_obstacle_produces_zero_envelope() -> None:
         assert node.last_envelope.max_angular_z_radps == 0.0
         assert node.last_diagnostics is not None
         assert (
-            node.last_diagnostics.state
-            == node.last_diagnostics.STATE_PROTECTIVE_STOP
+            node.last_diagnostics.state == node.last_diagnostics.STATE_PROTECTIVE_STOP
         )
     finally:
         _destroy(node)
@@ -315,9 +312,7 @@ def test_clock_regression_latches_fail_closed() -> None:
     try:
         baseline_ns = node._now_ns() + 1_000_000
         node._now_ns = lambda: baseline_ns
-        node._on_fault_status(
-            _fault(baseline_ns, SystemFaultStatus.FAULT_OK)
-        )
+        node._on_fault_status(_fault(baseline_ns, SystemFaultStatus.FAULT_OK))
         node._on_scan(_scan(baseline_ns))
         node._on_timer()
         assert node.last_envelope is not None
@@ -347,9 +342,7 @@ def test_scan_timestamp_regression_or_stagnation_latches_fail_closed(
     try:
         baseline_ns = node._now_ns() + 1_000_000
         node._now_ns = lambda: baseline_ns
-        node._on_fault_status(
-            _fault(baseline_ns, SystemFaultStatus.FAULT_OK)
-        )
+        node._on_fault_status(_fault(baseline_ns, SystemFaultStatus.FAULT_OK))
         node._on_scan(_scan(baseline_ns))
         node._on_timer()
         assert node.last_envelope is not None
@@ -373,21 +366,20 @@ def test_scan_timestamp_regression_or_stagnation_latches_fail_closed(
 def test_dynamic_envelope_clamps_safety_velocity_arbiter() -> None:
     rclpy.init()
     envelope_node = DynamicEnvelopeNode(parameter_overrides=_parameters())
-    arbiter = SafetyVelocityArbiterNode(
-        parameter_overrides=_arbiter_parameters()
-    )
+    arbiter = SafetyVelocityArbiterNode(parameter_overrides=_arbiter_parameters())
     try:
-        now_ns = max(
-            envelope_node._now_ns(),
-            arbiter.governor.last_timestamp_ns,
-        ) + 1_000_000_000
+        now_ns = (
+            max(
+                envelope_node._now_ns(),
+                arbiter.governor.last_timestamp_ns,
+            )
+            + 1_000_000_000
+        )
         envelope_node._now_ns = lambda: now_ns
         arbiter._now_ns = lambda: now_ns
         fault = _fault(now_ns, SystemFaultStatus.FAULT_OK)
         envelope_node._on_fault_status(fault)
-        envelope_node._on_scan(
-            _scan(now_ns, forward_m=0.8, lateral_m=0.35)
-        )
+        envelope_node._on_scan(_scan(now_ns, forward_m=0.8, lateral_m=0.35))
         envelope_node._on_timer()
         envelope = envelope_node.last_envelope
         assert envelope is not None

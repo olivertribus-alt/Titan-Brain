@@ -122,9 +122,8 @@ def _stamp_ns(
         | TwistStamped
     ),
 ) -> int:
-    return (
-        int(message.header.stamp.sec) * NANOSECONDS_PER_SECOND
-        + int(message.header.stamp.nanosec)
+    return int(message.header.stamp.sec) * NANOSECONDS_PER_SECOND + int(
+        message.header.stamp.nanosec
     )
 
 
@@ -178,18 +177,10 @@ def _envelope_telemetry(
             state=int(message.state),
             reason=str(message.reason).strip() or "unknown",
             scan_valid=bool(message.scan_valid),
-            distance_forward_m=_optional_distance(
-                message.distance_forward_m
-            ),
-            distance_lateral_m=_optional_distance(
-                message.distance_lateral_m
-            ),
-            max_linear_velocity_mps=float(
-                message.max_linear_velocity_mps
-            ),
-            max_angular_velocity_radps=float(
-                message.max_angular_velocity_radps
-            ),
+            distance_forward_m=_optional_distance(message.distance_forward_m),
+            distance_lateral_m=_optional_distance(message.distance_lateral_m),
+            max_linear_velocity_mps=float(message.max_linear_velocity_mps),
+            max_angular_velocity_radps=float(message.max_angular_velocity_radps),
         )
     except (TypeError, ValueError):
         return None
@@ -207,12 +198,8 @@ def _lifecycle_telemetry(
             reason=str(message.reason).strip() or "unknown",
             is_faulted=bool(message.is_faulted),
             recovery_active=bool(message.recovery_active),
-            max_linear_velocity_mps=float(
-                message.max_linear_velocity_mps
-            ),
-            max_angular_velocity_radps=float(
-                message.max_angular_velocity_radps
-            ),
+            max_linear_velocity_mps=float(message.max_linear_velocity_mps),
+            max_angular_velocity_radps=float(message.max_angular_velocity_radps),
         )
     except (TypeError, ValueError):
         return None
@@ -362,8 +349,7 @@ class TelemetryBlackboxNode(Node):
         state = int(message.state)
         if (
             self._last_lifecycle_state is not None
-            and self._last_lifecycle_state
-            != SafetyLifecycleStatus.STATE_EMERGENCY_STOP
+            and self._last_lifecycle_state != SafetyLifecycleStatus.STATE_EMERGENCY_STOP
             and state == SafetyLifecycleStatus.STATE_EMERGENCY_STOP
         ):
             self._queue_trigger(
@@ -392,10 +378,7 @@ class TelemetryBlackboxNode(Node):
             if self._last_recorded_at_ns is None
             else max(now_ns, self._last_recorded_at_ns)
         )
-        if (
-            self._last_recorded_at_ns is not None
-            and now_ns < self._last_recorded_at_ns
-        ):
+        if self._last_recorded_at_ns is not None and now_ns < self._last_recorded_at_ns:
             self._queue_trigger(
                 SnapshotTrigger.EMERGENCY_STOP,
                 "blackbox clock regression",
@@ -405,18 +388,10 @@ class TelemetryBlackboxNode(Node):
             TelemetryBlackboxFrame(
                 sequence_id=self._sequence_id,
                 recorded_at_ns=effective_now_ns,
-                teleoperation_command=_command_telemetry(
-                    self._latest_teleop
-                ),
-                autonomy_command=_command_telemetry(
-                    self._latest_autonomy
-                ),
-                authoritative_command=_command_telemetry(
-                    self._latest_output
-                ),
-                arbitration=_arbitration_telemetry(
-                    self._latest_arbitration
-                ),
+                teleoperation_command=_command_telemetry(self._latest_teleop),
+                autonomy_command=_command_telemetry(self._latest_autonomy),
+                authoritative_command=_command_telemetry(self._latest_output),
+                arbitration=_arbitration_telemetry(self._latest_arbitration),
                 envelope=_envelope_telemetry(self._latest_envelope),
                 lifecycle=_lifecycle_telemetry(self._latest_lifecycle),
             )
@@ -460,14 +435,10 @@ class TelemetryBlackboxNode(Node):
 
     def _export_if_ready(self) -> None:
         snapshot = self._blackbox.last_snapshot
-        if (
-            snapshot is None
-            or snapshot.snapshot_id <= self._last_exported_snapshot_id
-        ):
+        if snapshot is None or snapshot.snapshot_id <= self._last_exported_snapshot_id:
             return
         filename = (
-            f"blackbox-{snapshot.snapshot_id:06d}-"
-            f"{snapshot.trigger_timestamp_ns}.json"
+            f"blackbox-{snapshot.snapshot_id:06d}-{snapshot.trigger_timestamp_ns}.json"
         )
         destination = self._snapshot_output_directory / filename
         temporary = destination.with_suffix(".json.tmp")
@@ -488,9 +459,7 @@ class TelemetryBlackboxNode(Node):
             return
         self._last_exported_snapshot_id = snapshot.snapshot_id
         self._last_export_path = destination
-        self.get_logger().error(
-            f"Telemetry blackbox snapshot exported: {destination}"
-        )
+        self.get_logger().error(f"Telemetry blackbox snapshot exported: {destination}")
 
 
 def _shutdown_rclpy() -> None:

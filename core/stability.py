@@ -143,8 +143,7 @@ class StabilityTransition(StrictFrozenModel):
             if hold_elapsed_ns != self.evaluated_at_ns - recovery_started_at_ns:
                 raise ValueError("hold elapsed time must match recovery timestamps")
         elif (
-            self.recovery_started_at_ns is not None
-            or self.hold_elapsed_ns is not None
+            self.recovery_started_at_ns is not None or self.hold_elapsed_ns is not None
         ):
             raise ValueError("non-holding unsafe state must not retain a timer")
         return self
@@ -292,8 +291,7 @@ def transition_stability(
 
     recovery_started_at_ns = (
         cast(int, previous.recovery_started_at_ns)
-        if previous is not None
-        and previous.state is EvaluatorState.RECOVERY_HOLDING
+        if previous is not None and previous.state is EvaluatorState.RECOVERY_HOLDING
         else checked_now_ns
     )
     hold_elapsed_ns = checked_now_ns - recovery_started_at_ns
@@ -378,9 +376,7 @@ def signal_from_decision(result: SafetyDecisionResult) -> InstantaneousSafetySig
     if (observed is None) != (required is None):
         observed = None
         required = None
-    if level is InstantaneousSafetyLevel.OK and (
-        observed is None or required is None
-    ):
+    if level is InstantaneousSafetyLevel.OK and (observed is None or required is None):
         level = InstantaneousSafetyLevel.INVALID
         observed = None
         required = None

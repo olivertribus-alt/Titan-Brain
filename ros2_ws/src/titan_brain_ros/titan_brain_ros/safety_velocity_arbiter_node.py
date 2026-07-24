@@ -397,9 +397,10 @@ class SafetyVelocityArbiterNode(Node):
         timestamp_ns = _stamp_ns(envelope)
         if str(envelope.header.frame_id).strip() != self._output_frame_id:
             return 0.0, 0.0, "MOTION_ENVELOPE_FRAME_MISMATCH", False
-        if not str(envelope.policy_version).strip() or not str(
-            envelope.correlation_id
-        ).strip():
+        if (
+            not str(envelope.policy_version).strip()
+            or not str(envelope.correlation_id).strip()
+        ):
             return 0.0, 0.0, "MOTION_ENVELOPE_INVALID", False
         if timestamp_ns > now_ns:
             return 0.0, 0.0, "MOTION_ENVELOPE_FUTURE_TIMESTAMP", False
@@ -442,10 +443,7 @@ class SafetyVelocityArbiterNode(Node):
             return 0.0, 0.0, "MOTION_ENVELOPE_STOP_ONLY", False
         clamped_linear = max(min_linear, min(max_linear, frame.linear_x))
         clamped_angular = max(min_angular, min(max_angular, frame.angular_z))
-        changed = (
-            clamped_linear != frame.linear_x
-            or clamped_angular != frame.angular_z
-        )
+        changed = clamped_linear != frame.linear_x or clamped_angular != frame.angular_z
         return (
             clamped_linear,
             clamped_angular,
@@ -496,9 +494,7 @@ class SafetyVelocityArbiterNode(Node):
             return 0.0, 0.0, "SAFETY_LIFECYCLE_INVALID", False
         if int(status.state) == SafetyLifecycleStatus.STATE_EMERGENCY_STOP:
             return 0.0, 0.0, "SAFETY_LIFECYCLE_EMERGENCY_STOP", False
-        recovery_expected = (
-            int(status.state) == SafetyLifecycleStatus.STATE_RECOVERY
-        )
+        recovery_expected = int(status.state) == SafetyLifecycleStatus.STATE_RECOVERY
         if bool(status.recovery_active) is not recovery_expected:
             return 0.0, 0.0, "SAFETY_LIFECYCLE_INVALID", False
         if (
@@ -573,9 +569,7 @@ class SafetyVelocityArbiterNode(Node):
         )
         status.max_abs_linear_x = self._governor.config.max_linear_velocity_mps
         status.max_abs_linear_y = 0.0
-        status.max_abs_angular_z = (
-            self._governor.config.max_angular_velocity_radps
-        )
+        status.max_abs_angular_z = self._governor.config.max_angular_velocity_radps
         status.warning_max_abs_linear_x = (
             float(envelope.max_linear_x_mps) if envelope is not None else 0.0
         )
@@ -665,8 +659,8 @@ class SafetyVelocityArbiterNode(Node):
                 ),
             )
             return
-        linear, angular, envelope_reason, envelope_changed = (
-            self._clamp_with_envelope(selection.selected_frame, now_ns)
+        linear, angular, envelope_reason, envelope_changed = self._clamp_with_envelope(
+            selection.selected_frame, now_ns
         )
         if envelope_reason is not None and not envelope_changed:
             self._publish_emergency(

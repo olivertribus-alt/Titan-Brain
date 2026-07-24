@@ -7,12 +7,12 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set
 
 
 @dataclass(frozen=True)
 class SensorReading:
     """Represents a bounded telemetry frame from an individual sensor."""
+
     sensor_id: str
     distance_m: float
     timestamp_s: float
@@ -23,19 +23,20 @@ class SensorReading:
 @dataclass(frozen=True)
 class MultiSensorFusionResult:
     """Result of deterministic worst-case sensor envelope fusion."""
+
     fused_distance_m: float
-    strictest_sensor_id: Optional[str]
+    strictest_sensor_id: str | None
     active_sensors_count: int
-    stale_sensors: List[str]
+    stale_sensors: list[str]
     is_emergency: bool
-    emergency_reason: Optional[str]
+    emergency_reason: str | None
     timestamp_s: float
 
 
 class MultiSensorEnvelopeEvaluator:
     """
     Deterministic O(1) evaluator fusing K heterogeneous sensors.
-    
+
     Invariants:
     1. Conservative Worst-Case Union: d_fused = min_(k in S_valid)(d_k).
     2. Stale Guard: Any sensor exceeding stale_timeout_s is flagged stale.
@@ -52,9 +53,9 @@ class MultiSensorEnvelopeEvaluator:
         self.stale_timeout_s = max(0.01, float(stale_timeout_s))
         self.min_confidence = max(0.0, min(1.0, float(min_confidence)))
         self.max_sensors = max_sensors
-        
-        self._readings: Dict[str, SensorReading] = {}
-        self._critical_sensors: Set[str] = set()
+
+        self._readings: dict[str, SensorReading] = {}
+        self._critical_sensors: set[str] = set()
 
     def register_critical_sensor(self, sensor_id: str) -> None:
         """Explicitly register a sensor ID as critical for safety system."""
@@ -62,7 +63,10 @@ class MultiSensorEnvelopeEvaluator:
 
     def update_sensor(self, reading: SensorReading) -> None:
         """Update last known reading for a sensor in O(1)."""
-        if len(self._readings) >= self.max_sensors and reading.sensor_id not in self._readings:
+        if (
+            len(self._readings) >= self.max_sensors
+            and reading.sensor_id not in self._readings
+        ):
             return  # Reject overflow sensors to guarantee O(1) bound
 
         if reading.is_critical:
@@ -70,18 +74,20 @@ class MultiSensorEnvelopeEvaluator:
 
         self._readings[reading.sensor_id] = reading
 
-    def evaluate_fusion(self, current_time_s: Optional[float] = None) -> MultiSensorFusionResult:
+    def evaluate_fusion(
+        self, current_time_s: float | None = None
+    ) -> MultiSensorFusionResult:
         """
         Executes O(1) worst-case fusion across all active sensors.
-        
+
         Returns:
             MultiSensorFusionResult with fused min-distance and emergency status.
         """
         now = current_time_s if current_time_s is not None else time.time()
-        
-        stale_sensors: List[str] = []
-        valid_readings: List[SensorReading] = []
-        critical_stale_or_missing: List[str] = []
+
+        stale_sensors: list[str] = []
+        valid_readings: list[SensorReading] = []
+        critical_stale_or_missing: list[str] = []
 
         # Check all registered critical sensors for missing state
         for crit_id in sorted(self._critical_sensors):
@@ -92,10 +98,13 @@ class MultiSensorEnvelopeEvaluator:
         for sensor_id in sorted(self._readings.keys()):
             reading = self._readings[sensor_id]
             is_stale = (now - reading.timestamp_s) > self.stale_timeout_s
-            
+
             if is_stale or reading.confidence < self.min_confidence:
                 stale_sensors.append(sensor_id)
-                if sensor_id in self._critical_sensors and sensor_id not in critical_stale_or_missing:
+                if (
+                    sensor_id in self._critical_sensors
+                    and sensor_id not in critical_stale_or_missing
+                ):
                     critical_stale_or_missing.append(sensor_id)
             else:
                 valid_readings.append(reading)

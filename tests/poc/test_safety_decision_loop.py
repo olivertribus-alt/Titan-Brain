@@ -128,9 +128,7 @@ def test_evaluation_is_deterministic_and_side_effect_free() -> None:
     observation = _observation()
 
     results = [evaluate_safety(observation) for _ in range(100)]
-    serialized_decisions = [
-        result.decision.model_dump_json() for result in results
-    ]
+    serialized_decisions = [result.decision.model_dump_json() for result in results]
     decision_hashes = {
         hashlib.sha256(serialized.encode("utf-8")).hexdigest()
         for serialized in serialized_decisions

@@ -97,16 +97,10 @@ def _lifecycle(timestamp_ns: int, state: int) -> SafetyLifecycleStatus:
         if state == SafetyLifecycleStatus.STATE_EMERGENCY_STOP
         else "normal"
     )
-    message.is_faulted = (
-        state == SafetyLifecycleStatus.STATE_EMERGENCY_STOP
-    )
-    message.recovery_active = (
-        state == SafetyLifecycleStatus.STATE_RECOVERY
-    )
+    message.is_faulted = state == SafetyLifecycleStatus.STATE_EMERGENCY_STOP
+    message.recovery_active = state == SafetyLifecycleStatus.STATE_RECOVERY
     message.max_linear_velocity_mps = (
-        0.0
-        if state == SafetyLifecycleStatus.STATE_EMERGENCY_STOP
-        else 1.0
+        0.0 if state == SafetyLifecycleStatus.STATE_EMERGENCY_STOP else 1.0
     )
     message.max_angular_velocity_radps = message.max_linear_velocity_mps
     return message
@@ -266,9 +260,7 @@ def test_hard_fault_has_trigger_priority_over_same_tick_emergency(
                 SafetyLifecycleStatus.STATE_EMERGENCY_STOP,
             )
         )
-        node._on_fault_status(
-            _fault(now_ns, SystemFaultStatus.FAULT_HARDWARE_FAULT)
-        )
+        node._on_fault_status(_fault(now_ns, SystemFaultStatus.FAULT_HARDWARE_FAULT))
         node._now_ns = lambda: now_ns
         node._on_timer()
 
@@ -324,10 +316,7 @@ def test_manual_service_trigger_exports_synchronous_snapshot(
         assert response.success is True
         assert response.message == "blackbox snapshot capture started"
         assert node.blackbox.last_snapshot is not None
-        assert (
-            node.blackbox.last_snapshot.trigger
-            is SnapshotTrigger.MANUAL
-        )
+        assert node.blackbox.last_snapshot.trigger is SnapshotTrigger.MANUAL
         assert node.last_export_path is not None
     finally:
         _destroy(node)
@@ -342,9 +331,7 @@ def test_manual_trigger_cannot_replace_pending_automatic_incident(
     )
     try:
         now_ns = node._now_ns() + 1_000_000
-        node._on_fault_status(
-            _fault(now_ns, SystemFaultStatus.FAULT_HARDWARE_FAULT)
-        )
+        node._on_fault_status(_fault(now_ns, SystemFaultStatus.FAULT_HARDWARE_FAULT))
 
         response = node._on_manual_trigger(
             Trigger.Request(),

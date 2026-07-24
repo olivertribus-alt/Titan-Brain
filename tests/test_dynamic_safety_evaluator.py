@@ -183,8 +183,7 @@ def test_low_confidence_dynamic_violation_is_protective_stop() -> None:
     assert result.is_incident is True
 
 
-def test_missing_directional_input_fails_closed_when_dynamic_mode_is_enabled(
-) -> None:
+def test_missing_directional_input_fails_closed_when_dynamic_mode_is_enabled() -> None:
     result = evaluate_safety(
         _observation(include_directional_data=False),
         _rules(),
@@ -240,9 +239,7 @@ def test_legacy_default_path_preserves_existing_decision_id() -> None:
 
 
 def test_legacy_rules_ignore_opt_in_data_until_dynamic_config_is_present() -> None:
-    result = evaluate_safety(
-        _observation(clearance_m=0.80, linear_x_mps=10.0)
-    )
+    result = evaluate_safety(_observation(clearance_m=0.80, linear_x_mps=10.0))
 
     assert result.decision.action == "proceed"
     assert result.decision.rule == "EV-SAFE-00"
@@ -259,12 +256,8 @@ def test_dynamic_incident_evidence_is_persisted_atomically(tmp_path: Path) -> No
 
     assert result.decision.decision_id is not None
     assert store.load(result.decision.decision_id) == result.decision
-    assert result.decision.evidence["reaction_distance"].value == pytest.approx(
-        0.20
-    )
-    assert result.decision.evidence["braking_distance"].value == pytest.approx(
-        0.32
-    )
+    assert result.decision.evidence["reaction_distance"].value == pytest.approx(0.20)
+    assert result.decision.evidence["braking_distance"].value == pytest.approx(0.32)
     assert not list(tmp_path.glob("*.tmp"))
 
 
@@ -274,9 +267,7 @@ def test_dynamic_evaluation_is_bit_deterministic() -> None:
 
     results = [evaluate_safety(observation, rules) for _ in range(100)]
     serialized = [result.model_dump_json() for result in results]
-    hashes = {
-        hashlib.sha256(value.encode("utf-8")).hexdigest() for value in serialized
-    }
+    hashes = {hashlib.sha256(value.encode("utf-8")).hexdigest() for value in serialized}
 
     assert all(result == results[0] for result in results)
     assert len(set(serialized)) == 1

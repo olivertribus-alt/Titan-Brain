@@ -75,9 +75,7 @@ def _required_finite_parameter(
     minimum_is_valid = checked >= 0.0 if allow_zero else checked > 0.0
     if not math.isfinite(checked) or not minimum_is_valid:
         qualifier = "non-negative" if allow_zero else "positive"
-        raise ValueError(
-            f"ROS parameter {name!r} must be finite and {qualifier}"
-        )
+        raise ValueError(f"ROS parameter {name!r} must be finite and {qualifier}")
     return checked
 
 
@@ -89,16 +87,14 @@ def _seconds_to_ns(value: float, *, name: str) -> int:
 
 
 def _intent_timestamp_ns(message: SafetyIntentMsg) -> int:
-    return (
-        int(message.timestamp.sec) * _NANOSECONDS_PER_SECOND
-        + int(message.timestamp.nanosec)
+    return int(message.timestamp.sec) * _NANOSECONDS_PER_SECOND + int(
+        message.timestamp.nanosec
     )
 
 
 def _envelope_timestamp_ns(message: PermittedMotionEnvelopeMsg) -> int:
-    return (
-        int(message.header.stamp.sec) * _NANOSECONDS_PER_SECOND
-        + int(message.header.stamp.nanosec)
+    return int(message.header.stamp.sec) * _NANOSECONDS_PER_SECOND + int(
+        message.header.stamp.nanosec
     )
 
 
@@ -123,9 +119,7 @@ def _intent_state(value: int) -> SafetyIntentState | None:
         SafetyIntentMsg.STATE_NORMAL: SafetyIntentState.NORMAL,
         SafetyIntentMsg.STATE_WARNING: SafetyIntentState.WARNING,
         SafetyIntentMsg.STATE_E_STOP: SafetyIntentState.E_STOP,
-        SafetyIntentMsg.STATE_RECOVERY_HOLDING: (
-            SafetyIntentState.RECOVERY_HOLDING
-        ),
+        SafetyIntentMsg.STATE_RECOVERY_HOLDING: (SafetyIntentState.RECOVERY_HOLDING),
     }.get(value)
 
 
@@ -329,9 +323,7 @@ class VelocityArbiterNode(Node):
         if last_sequence_id is not None:
             if source_sequence_id < last_sequence_id:
                 self._safety_intent_received_ns = received_at_ns
-                self._safety_intent = {
-                    "source_sequence_regression": source_sequence_id
-                }
+                self._safety_intent = {"source_sequence_regression": source_sequence_id}
                 return
             if source_sequence_id == last_sequence_id:
                 if payload != self._last_source_intent_payload:
@@ -384,9 +376,7 @@ class VelocityArbiterNode(Node):
         self._motion_envelope_timestamp_ns = timestamp_ns
 
         if source_sequence_id <= 0:
-            self._motion_envelope = {
-                "invalid_source_sequence_id": source_sequence_id
-            }
+            self._motion_envelope = {"invalid_source_sequence_id": source_sequence_id}
             return
 
         last_sequence_id = self._last_source_envelope_sequence_id
@@ -441,16 +431,12 @@ class VelocityArbiterNode(Node):
         status.mode = _status_mode(result)
         status.reason = result.reason.value
         status.policy_version = result.policy_version
-        status.correlation_id = (
-            result.correlation_id or self._audit_correlation_id
-        )
+        status.correlation_id = result.correlation_id or self._audit_correlation_id
         status.is_safe = result.mode is not ArbitrationMode.FORCED_ZERO
         status.command_sequence_id = self._command_sequence_id
         status.safety_intent_sequence_id = self._source_intent_sequence_id
         status.motion_envelope_sequence_id = self._source_envelope_sequence_id
-        status.motion_envelope_correlation_id = (
-            self._audit_envelope_correlation_id
-        )
+        status.motion_envelope_correlation_id = self._audit_envelope_correlation_id
         status.motion_envelope_timestamp_ns = self._motion_envelope_timestamp_ns
         status.arbitration_latency_status = timing.status.value
         status.arbitration_timing_valid = timing.timing_valid

@@ -3,7 +3,6 @@ ROS 2 Multi-Sensor Fusion Envelope Node for Titan Brain (TB-EVAL-009C)
 """
 
 import time
-from typing import List
 
 import rclpy
 from rclpy.node import Node
@@ -41,7 +40,9 @@ class MultiSensorEnvelopeNode(Node):
         )
 
         # Publishers
-        self.fused_dist_pub = self.create_publisher(Float32, "/safety/fused_min_distance", 10)
+        self.fused_dist_pub = self.create_publisher(
+            Float32, "/safety/fused_min_distance", 10
+        )
         self.diag_pub = self.create_publisher(String, "/safety/fusion_diagnostics", 10)
 
         timer_period = 1.0 / rate_hz
@@ -50,7 +51,7 @@ class MultiSensorEnvelopeNode(Node):
     def _scan_callback(self, msg: LaserScan) -> None:
         valid_ranges = [r for r in msg.ranges if msg.range_min <= r <= msg.range_max]
         min_dist = min(valid_ranges) if valid_ranges else float("inf")
-        
+
         now_s = time.time()
         self.evaluator.update_sensor(
             SensorReading(
@@ -78,7 +79,7 @@ class MultiSensorEnvelopeNode(Node):
         self.diag_pub.publish(diag_msg)
 
 
-def main(args: List[str] | None = None) -> None:
+def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
     node = MultiSensorEnvelopeNode()
     try:

@@ -94,9 +94,7 @@ def _required_nonnegative_float_parameter(node: Node, name: str) -> float:
         raise ValueError(f"ROS parameter {name!r} must be numeric")
     checked = float(value)
     if not math.isfinite(checked) or checked < 0.0:
-        raise ValueError(
-            f"ROS parameter {name!r} must be finite and non-negative"
-        )
+        raise ValueError(f"ROS parameter {name!r} must be finite and non-negative")
     return checked
 
 
@@ -139,14 +137,10 @@ def _feedback_payload(message: ActuatorFeedbackMsg) -> Mapping[str, object]:
         "measured_linear_y": float(message.measured_linear_y),
         "measured_angular_z": float(message.measured_angular_z),
     }
-    if (
-        not bool(message.is_valid)
-        or int(message.state)
-        in {
-            ActuatorFeedbackMsg.STATE_INVALID_DATA,
-            ActuatorFeedbackMsg.STATE_STALE_DATA,
-        }
-    ):
+    if not bool(message.is_valid) or int(message.state) in {
+        ActuatorFeedbackMsg.STATE_INVALID_DATA,
+        ActuatorFeedbackMsg.STATE_STALE_DATA,
+    }:
         payload["transport_feedback_invalid"] = True
     return payload
 
@@ -168,9 +162,7 @@ def _state_code(result: StopMonitorResult) -> int:
         "idle": StopAcknowledgementMsg.STATE_IDLE,
         "stop_pending": StopAcknowledgementMsg.STATE_STOP_PENDING,
         "stop_acknowledged": StopAcknowledgementMsg.STATE_STOP_ACKNOWLEDGED,
-        "hardware_fault_latch": (
-            StopAcknowledgementMsg.STATE_HARDWARE_FAULT_LATCH
-        ),
+        "hardware_fault_latch": (StopAcknowledgementMsg.STATE_HARDWARE_FAULT_LATCH),
     }[result.state.value]
 
 
@@ -366,10 +358,9 @@ class ActuatorFeedbackMonitorNode(Node):
 
     def _on_arbitration_status(self, message: ArbitrationStatusMsg) -> None:
         self._last_control_status = message
-        command_is_stop = (
-            int(message.mode) == ArbitrationStatusMsg.MODE_FORCED_ZERO
-            or _is_zero_command(message)
-        )
+        command_is_stop = int(
+            message.mode
+        ) == ArbitrationStatusMsg.MODE_FORCED_ZERO or _is_zero_command(message)
         if not command_is_stop:
             return
         now_ns = self._now_ns()
@@ -386,8 +377,7 @@ class ActuatorFeedbackMonitorNode(Node):
         lateral = getattr(getattr(message, "linear", None), "y", math.inf)
         angular = getattr(getattr(message, "angular", None), "z", math.inf)
         if not all(
-            abs(float(value)) <= _ZERO_EPSILON
-            for value in (linear, lateral, angular)
+            abs(float(value)) <= _ZERO_EPSILON for value in (linear, lateral, angular)
         ):
             return
         if self._monitor.state.value != "idle":

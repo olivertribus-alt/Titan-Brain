@@ -63,9 +63,7 @@ def _intent(
     message.state = state
     _set_intent_stamp(
         message,
-        node.get_clock().now().nanoseconds
-        if timestamp_ns is None
-        else timestamp_ns,
+        node.get_clock().now().nanoseconds if timestamp_ns is None else timestamp_ns,
     )
     message.correlation_id = correlation_id
     message.sequence_id = sequence_id
@@ -88,14 +86,10 @@ def _envelope(
 ) -> PermittedMotionEnvelope:
     message = PermittedMotionEnvelope()
     envelope_timestamp_ns = (
-        node.get_clock().now().nanoseconds
-        if timestamp_ns is None
-        else timestamp_ns
+        node.get_clock().now().nanoseconds if timestamp_ns is None else timestamp_ns
     )
     message.header.stamp.sec = envelope_timestamp_ns // _NANOSECONDS_PER_SECOND
-    message.header.stamp.nanosec = (
-        envelope_timestamp_ns % _NANOSECONDS_PER_SECOND
-    )
+    message.header.stamp.nanosec = envelope_timestamp_ns % _NANOSECONDS_PER_SECOND
     message.header.frame_id = frame_id
     message.policy_version = "TB-EVAL-005C-ENVELOPE-0.1.0"
     message.correlation_id = correlation_id
@@ -196,8 +190,7 @@ def test_fresh_normal_intent_and_newer_command_are_passed_through() -> None:
         assert status.arbitration_within_budget is True
         assert status.arbitration_latency_status == "within_budget"
         assert (
-            status.command_published_timestamp_ns
-            - status.intent_received_timestamp_ns
+            status.command_published_timestamp_ns - status.intent_received_timestamp_ns
             == status.arbitration_latency_ns
         )
         assert status.max_abs_linear_x == 0.8
@@ -328,8 +321,7 @@ def test_missing_and_invalid_envelopes_fail_closed() -> None:
         missing_node._on_timer()
         assert missing_node.last_result is not None
         assert (
-            missing_node.last_result.reason
-            is ArbitrationReason.MOTION_ENVELOPE_MISSING
+            missing_node.last_result.reason is ArbitrationReason.MOTION_ENVELOPE_MISSING
         )
 
         invalid_node._on_motion_envelope(
@@ -340,8 +332,7 @@ def test_missing_and_invalid_envelopes_fail_closed() -> None:
         invalid_node._on_timer()
         assert invalid_node.last_result is not None
         assert (
-            invalid_node.last_result.reason
-            is ArbitrationReason.MOTION_ENVELOPE_INVALID
+            invalid_node.last_result.reason is ArbitrationReason.MOTION_ENVELOPE_INVALID
         )
         assert invalid_node.last_result.command.linear_x == 0.0
     finally:
@@ -350,8 +341,7 @@ def test_missing_and_invalid_envelopes_fail_closed() -> None:
         rclpy.shutdown()
 
 
-def test_envelope_timeout_clock_regression_and_identity_mismatch_fail_closed(
-) -> None:
+def test_envelope_timeout_clock_regression_and_identity_mismatch_fail_closed() -> None:
     rclpy.init()
     stale_node = _node()
     future_node = _node()
@@ -363,9 +353,7 @@ def test_envelope_timeout_clock_regression_and_identity_mismatch_fail_closed(
             _envelope(
                 stale_node,
                 sequence_id=2,
-                timestamp_ns=(
-                    stale_node.get_clock().now().nanoseconds - 50_000_000
-                ),
+                timestamp_ns=(stale_node.get_clock().now().nanoseconds - 50_000_000),
             )
         )
         stale_node._on_safety_intent(_intent(stale_node, sequence_id=2))
@@ -373,8 +361,7 @@ def test_envelope_timeout_clock_regression_and_identity_mismatch_fail_closed(
         stale_node._on_timer()
         assert stale_node.last_result is not None
         assert (
-            stale_node.last_result.reason
-            is ArbitrationReason.MOTION_ENVELOPE_TIMEOUT
+            stale_node.last_result.reason is ArbitrationReason.MOTION_ENVELOPE_TIMEOUT
         )
 
         future_node._on_motion_envelope(
@@ -402,9 +389,7 @@ def test_envelope_timeout_clock_regression_and_identity_mismatch_fail_closed(
                 correlation_id="wrong-decision",
             )
         )
-        correlation_node._on_safety_intent(
-            _intent(correlation_node, sequence_id=2)
-        )
+        correlation_node._on_safety_intent(_intent(correlation_node, sequence_id=2))
         correlation_node._on_desired_velocity(_desired_twist())
         correlation_node._on_timer()
         assert correlation_node.last_result is not None
@@ -413,9 +398,7 @@ def test_envelope_timeout_clock_regression_and_identity_mismatch_fail_closed(
             is ArbitrationReason.MOTION_ENVELOPE_INTENT_MISMATCH
         )
 
-        sequence_node._on_motion_envelope(
-            _envelope(sequence_node, sequence_id=2)
-        )
+        sequence_node._on_motion_envelope(_envelope(sequence_node, sequence_id=2))
         sequence_node._on_safety_intent(_intent(sequence_node, sequence_id=3))
         sequence_node._on_desired_velocity(_desired_twist())
         sequence_node._on_timer()
@@ -503,15 +486,9 @@ def test_envelope_replay_does_not_refresh_and_mutation_fails_closed() -> None:
         node._on_desired_velocity(_desired_twist())
         node._on_timer()
         assert node.last_result is not None
-        assert (
-            node.last_result.reason
-            is ArbitrationReason.MOTION_ENVELOPE_INVALID
-        )
+        assert node.last_result.reason is ArbitrationReason.MOTION_ENVELOPE_INVALID
         assert node.last_status is not None
-        assert (
-            node.last_status.motion_envelope_correlation_id
-            == "decision-mutated"
-        )
+        assert node.last_status.motion_envelope_correlation_id == "decision-mutated"
 
         node._on_motion_envelope(
             _envelope(
@@ -522,10 +499,7 @@ def test_envelope_replay_does_not_refresh_and_mutation_fails_closed() -> None:
         )
         node._on_timer()
         assert node.last_result is not None
-        assert (
-            node.last_result.reason
-            is ArbitrationReason.MOTION_ENVELOPE_INVALID
-        )
+        assert node.last_result.reason is ArbitrationReason.MOTION_ENVELOPE_INVALID
     finally:
         node.destroy_node()
         rclpy.shutdown()
@@ -535,9 +509,7 @@ def test_stop_states_latch_and_require_explicit_normal_then_new_command() -> Non
     rclpy.init()
     node = _node()
     try:
-        node._on_safety_intent(
-            _intent(node, state=SafetyIntent.STATE_E_STOP)
-        )
+        node._on_safety_intent(_intent(node, state=SafetyIntent.STATE_E_STOP))
         node._on_desired_velocity(_desired_twist())
         node._on_timer()
         assert node.last_result is not None
@@ -609,8 +581,7 @@ def test_independent_safety_and_command_timeouts_force_zero() -> None:
             "linear_y": 0.0,
             "angular_z": 0.0,
             "timestamp_ns": (
-                command_timeout_node.get_clock().now().nanoseconds
-                - 200_000_000
+                command_timeout_node.get_clock().now().nanoseconds - 200_000_000
             ),
             "frame_id": "base_link",
             "sequence_id": 2,
@@ -618,8 +589,7 @@ def test_independent_safety_and_command_timeouts_force_zero() -> None:
         command_timeout_node._on_timer()
         assert command_timeout_node.last_result is not None
         assert (
-            command_timeout_node.last_result.reason
-            is ArbitrationReason.COMMAND_TIMEOUT
+            command_timeout_node.last_result.reason is ArbitrationReason.COMMAND_TIMEOUT
         )
     finally:
         safety_timeout_node.destroy_node()

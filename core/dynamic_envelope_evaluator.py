@@ -135,9 +135,7 @@ class DynamicEnvelopeEvaluator:
         self._braking_config = BrakingEnvelopeConfig(
             policy_version=self._config.policy_version,
             reaction_time_ns=self._config.reaction_time_ns,
-            assured_deceleration_mps2=(
-                self._config.assured_deceleration_mps2
-            ),
+            assured_deceleration_mps2=(self._config.assured_deceleration_mps2),
             clearance_margin_m=self._config.clearance_margin_m,
         )
 
@@ -230,12 +228,8 @@ class DynamicEnvelopeEvaluator:
             state = EnvelopeState.NOMINAL
             reason = "NOMINAL_AUTHORITY"
 
-        linear_ratio = (
-            linear_limit / self._config.nominal_linear_velocity_mps
-        )
-        angular_ratio = (
-            angular_limit / self._config.nominal_angular_velocity_radps
-        )
+        linear_ratio = linear_limit / self._config.nominal_linear_velocity_mps
+        angular_ratio = angular_limit / self._config.nominal_angular_velocity_radps
         if state is EnvelopeState.NOMINAL:
             limiting_zone = LimitingZone.NONE
         elif linear_ratio <= angular_ratio:
@@ -243,17 +237,13 @@ class DynamicEnvelopeEvaluator:
         else:
             limiting_zone = LimitingZone.LATERAL
 
-        tangential_speed = (
-            angular_limit * self._config.angular_swept_radius_m
-        )
+        tangential_speed = angular_limit * self._config.angular_swept_radius_m
         return EnvelopeResult(
             policy_version=self._config.policy_version,
             max_linear_velocity_mps=linear_limit,
             max_angular_velocity_radps=angular_limit,
             linear_stopping_distance_m=self.stopping_distance(linear_limit),
-            angular_stopping_distance_m=self.stopping_distance(
-                tangential_speed
-            ),
+            angular_stopping_distance_m=self.stopping_distance(tangential_speed),
             distance_forward_m=frame.distance_forward_m,
             distance_lateral_m=frame.distance_lateral_m,
             state=state,

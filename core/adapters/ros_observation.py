@@ -115,9 +115,7 @@ class ObservationAdaptation(StrictFrozenModel):
                     "Accepted adaptation requires an observation and no detail."
                 )
         elif self.observation is not None or self.detail is None:
-            raise ValueError(
-                "Rejected adaptation requires detail and no observation."
-            )
+            raise ValueError("Rejected adaptation requires detail and no observation.")
         return self
 
 
@@ -296,12 +294,9 @@ class RosObservationAdapter:
             last_valid = self._last_valid_received_at_ns
             if (
                 last_valid is not None
-                and checked_now_ns - last_valid
-                > self._config.watchdog_timeout_ns
+                and checked_now_ns - last_valid > self._config.watchdog_timeout_ns
             ):
-                self._stability_filter.force_observation_timeout(
-                    now_ns=checked_now_ns
-                )
+                self._stability_filter.force_observation_timeout(now_ns=checked_now_ns)
             instantaneous_decision = (
                 evaluate_safety(adaptation.observation)
                 if self._safety_rules is None

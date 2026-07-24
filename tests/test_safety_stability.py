@@ -456,9 +456,7 @@ def test_partial_clearance_evidence_cannot_break_immediate_stop(
 
 
 def test_missing_clearance_or_unknown_action_is_invalid() -> None:
-    missing = signal_from_decision(
-        _decision(action="proceed", include_clearance=False)
-    )
+    missing = signal_from_decision(_decision(action="proceed", include_clearance=False))
     unknown = signal_from_decision(_decision(action="unexpected"))
 
     assert missing.level is InstantaneousSafetyLevel.INVALID
@@ -526,9 +524,7 @@ def test_filter_is_deterministic_across_identical_sequences() -> None:
         assert filter_.last_transition == final.transition
         serialized.append(final.model_dump_json())
 
-    hashes = {
-        hashlib.sha256(value.encode("utf-8")).hexdigest() for value in serialized
-    }
+    hashes = {hashlib.sha256(value.encode("utf-8")).hexdigest() for value in serialized}
     assert len(set(serialized)) == 1
     assert len(hashes) == 1
 

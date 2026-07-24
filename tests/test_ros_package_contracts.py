@@ -27,11 +27,7 @@ def _package_dependencies(path: Path) -> set[str]:
         "exec_depend",
         "test_depend",
     }
-    return {
-        element.text or ""
-        for element in root
-        if element.tag in dependency_tags
-    }
+    return {element.text or "" for element in root if element.tag in dependency_tags}
 
 
 def _float_parameter(config_text: str, name: str) -> float:
@@ -398,10 +394,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     } <= dependencies
     assert "ament_python" not in dependencies
     assert "<build_type>ament_python</build_type>" in manifest
-    assert (
-        "titan_brain_ros.safety_observation_node:main"
-        in setup
-    )
+    assert "titan_brain_ros.safety_observation_node:main" in setup
     assert "titan_brain_ros.velocity_arbiter_node:main" in setup
     assert "titan_brain_ros.command_path_observability_node:main" in setup
     assert "titan_brain_ros.actuator_feedback_monitor_node:main" in setup
@@ -412,36 +405,18 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert "titan_brain_ros.safety_recovery_manager_node:main" in setup
     assert "titan_brain_ros.telemetry_blackbox_node:main" in setup
     assert (package / "resource" / "titan_brain_ros").is_file()
-    assert (
-        package / "titan_brain_ros" / "safety_observation_node.py"
-    ).is_file()
-    assert (
-        package / "titan_brain_ros" / "velocity_arbiter_node.py"
-    ).is_file()
+    assert (package / "titan_brain_ros" / "safety_observation_node.py").is_file()
+    assert (package / "titan_brain_ros" / "velocity_arbiter_node.py").is_file()
     assert (
         package / "titan_brain_ros" / "command_path_observability_node.py"
     ).is_file()
-    assert (
-        package / "titan_brain_ros" / "actuator_feedback_monitor_node.py"
-    ).is_file()
-    assert (
-        package / "titan_brain_ros" / "safety_loop_supervisor_node.py"
-    ).is_file()
-    assert (
-        package / "titan_brain_ros" / "command_governor_node.py"
-    ).is_file()
-    assert (
-        package / "titan_brain_ros" / "safety_velocity_arbiter_node.py"
-    ).is_file()
-    assert (
-        package / "titan_brain_ros" / "dynamic_envelope_node.py"
-    ).is_file()
-    assert (
-        package / "titan_brain_ros" / "safety_recovery_manager_node.py"
-    ).is_file()
-    assert (
-        package / "titan_brain_ros" / "telemetry_blackbox_node.py"
-    ).is_file()
+    assert (package / "titan_brain_ros" / "actuator_feedback_monitor_node.py").is_file()
+    assert (package / "titan_brain_ros" / "safety_loop_supervisor_node.py").is_file()
+    assert (package / "titan_brain_ros" / "command_governor_node.py").is_file()
+    assert (package / "titan_brain_ros" / "safety_velocity_arbiter_node.py").is_file()
+    assert (package / "titan_brain_ros" / "dynamic_envelope_node.py").is_file()
+    assert (package / "titan_brain_ros" / "safety_recovery_manager_node.py").is_file()
+    assert (package / "titan_brain_ros" / "telemetry_blackbox_node.py").is_file()
     shared_config = package / "config" / "titan_brain.yaml"
     launch_file = package / "launch" / "titan_brain.launch.py"
     e2e_test = package / "test" / "test_e2e_transport.py"
@@ -586,16 +561,10 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert _float_parameter(config_text, "warning_distance_m") == 1.00
     assert _float_parameter(config_text, "distance_hysteresis_m") == 0.10
     assert _float_parameter(config_text, "recovery_dwell_time_sec") == 1.00
-    assert (
-        _float_parameter(config_text, "recovery_linear_speed_limit_mps")
-        == 0.20
-    )
+    assert _float_parameter(config_text, "recovery_linear_speed_limit_mps") == 0.20
     assert "capacity_frames: 500" in config_text
     assert "post_trigger_frames: 50" in config_text
-    assert (
-        'snapshot_output_directory: "/tmp/titan_brain_blackbox"'
-        in config_text
-    )
+    assert 'snapshot_output_directory: "/tmp/titan_brain_blackbox"' in config_text
     assert _float_parameter(config_text, "observation_to_command_budget_sec") == 0.10
     assert '"config/titan_brain.yaml"' in setup
     assert '"launch/titan_brain.launch.py"' in setup
@@ -605,7 +574,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert 'executable="safety_observation_node"' in launch_text
     assert 'executable="velocity_arbiter_node"' in launch_text
     assert 'executable="command_path_observability_node"' in launch_text
-    assert 'parameters=[config_file]' in launch_text
+    assert "parameters=[config_file]" in launch_text
     assert "@pytest.mark.launch_test" in e2e_text
     assert '"/safety/observation"' in e2e_text
     assert '"/safety/directional_observation"' in e2e_text
@@ -625,24 +594,16 @@ def test_ci_uses_the_reproducible_jazzy_container_gate() -> None:
 
     assert "pip install --constraint requirements/constraints.txt" in workflow
     assert "docker build --tag titan-brain-dev:ci ." in workflow
-    assert (
-        "docker run --rm titan-brain-dev:ci scripts/quality-gate.sh all"
-        in workflow
-    )
+    assert "docker run --rm titan-brain-dev:ci scripts/quality-gate.sh all" in workflow
     assert "ros-tooling/setup-ros" not in workflow
     assert "--break-system-packages" not in workflow
 
 
 def test_tb_eval_008c_fault_injection_gate_is_complete() -> None:
     integration_test = (
-        ROS_SOURCE
-        / "titan_brain_ros"
-        / "test"
-        / "test_integration_rosbag_008c.py"
+        ROS_SOURCE / "titan_brain_ros" / "test" / "test_integration_rosbag_008c.py"
     ).read_text(encoding="utf-8")
-    documentation = (REPOSITORY_ROOT / "TB-EVAL-008C.md").read_text(
-        encoding="utf-8"
-    )
+    documentation = (REPOSITORY_ROOT / "TB-EVAL-008C.md").read_text(encoding="utf-8")
 
     assert "@pytest.mark.launch_test" in integration_test
     assert '"SCAN_TIMEOUT"' in integration_test
@@ -660,12 +621,10 @@ def test_tb_eval_008c_fault_injection_gate_is_complete() -> None:
 
 def test_tb_eval_009b_blackbox_gate_is_complete() -> None:
     package = ROS_SOURCE / "titan_brain_ros"
-    node_test = (
-        package / "test" / "test_telemetry_blackbox_node.py"
-    ).read_text(encoding="utf-8")
-    documentation = (REPOSITORY_ROOT / "TB-EVAL-009B.md").read_text(
+    node_test = (package / "test" / "test_telemetry_blackbox_node.py").read_text(
         encoding="utf-8"
     )
+    documentation = (REPOSITORY_ROOT / "TB-EVAL-009B.md").read_text(encoding="utf-8")
 
     assert "test_emergency_transition_freezes_exact_post_window" in node_test
     assert "test_hard_fault_has_trigger_priority" in node_test

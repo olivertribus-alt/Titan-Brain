@@ -1,6 +1,5 @@
 """Unit test suite for TB-EVAL-009C Multi-Sensor Envelope Evaluator."""
 
-import pytest
 from core.multi_sensor_envelope import (
     MultiSensorEnvelopeEvaluator,
     SensorReading,
@@ -43,8 +42,12 @@ def test_low_confidence_filtering() -> None:
     evaluator = MultiSensorEnvelopeEvaluator(min_confidence=0.6)
     now = 1000.0
 
-    evaluator.update_sensor(SensorReading("sonar", 0.5, now, confidence=0.3))  # Rejected
-    evaluator.update_sensor(SensorReading("lidar", 2.0, now, confidence=0.9))  # Accepted
+    evaluator.update_sensor(
+        SensorReading("sonar", 0.5, now, confidence=0.3)
+    )  # Rejected
+    evaluator.update_sensor(
+        SensorReading("lidar", 2.0, now, confidence=0.9)
+    )  # Accepted
 
     res = evaluator.evaluate_fusion(now)
     assert not res.is_emergency
