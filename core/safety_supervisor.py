@@ -111,10 +111,7 @@ class SafetySupervisorConfig:
     def channel_timeouts(self) -> Mapping[HeartbeatChannel, int]:
         """Return an immutable snapshot of all channel budgets."""
         return MappingProxyType(
-            {
-                channel: self.timeout_for(channel)
-                for channel in HeartbeatChannel
-            }
+            {channel: self.timeout_for(channel) for channel in HeartbeatChannel}
         )
 
 
@@ -259,9 +256,7 @@ class SafetySupervisor:
         started_at_ns: object | None = None,
     ) -> None:
         self._config = config or SafetySupervisorConfig()
-        start_value = (
-            time.monotonic_ns() if started_at_ns is None else started_at_ns
-        )
+        start_value = time.monotonic_ns() if started_at_ns is None else started_at_ns
         start_ns = _checked_timestamp(start_value)
         if start_ns is None:
             raise ValueError("started_at_ns must be a non-negative integer")
@@ -484,9 +479,7 @@ class SafetySupervisor:
                 failed_channels=(checked_channel,),
                 detail="Heartbeat healthy flag must be boolean.",
             )
-        if error is not None and (
-            not isinstance(error, str) or not error.strip()
-        ):
+        if error is not None and (not isinstance(error, str) or not error.strip()):
             return self._trip(
                 reason=SafetyReason.INVALID_HEARTBEAT,
                 evaluated_at_ns=checked_now,
@@ -499,9 +492,7 @@ class SafetySupervisor:
                 evaluated_at_ns=checked_now,
                 failed_channels=(checked_channel,),
                 detail=(
-                    str(error)
-                    if error is not None
-                    else "Component reported unhealthy."
+                    str(error) if error is not None else "Component reported unhealthy."
                 ),
             )
 
@@ -789,8 +780,7 @@ class SafetySupervisor:
             ):
                 reason = (
                     SafetyReason.UNINTENDED_DISCONNECT
-                    if result.relay_request
-                    is RelayRequest.REQUEST_SAFETY_CLOSED
+                    if result.relay_request is RelayRequest.REQUEST_SAFETY_CLOSED
                     else SafetyReason.WELDED_CONTACTS
                 )
                 detail = (
@@ -811,9 +801,7 @@ class SafetySupervisor:
                 detail="Relay transition timestamp moved backwards.",
                 reason=SafetyReason.RELAY_CLOCK_REGRESSION,
             )
-        expected_closed = (
-            result.relay_request is RelayRequest.REQUEST_SAFETY_CLOSED
-        )
+        expected_closed = result.relay_request is RelayRequest.REQUEST_SAFETY_CLOSED
         feedback = self._relay_feedback_closed
         if feedback is None:
             if elapsed_ns > self._config.relay_budget_ns:

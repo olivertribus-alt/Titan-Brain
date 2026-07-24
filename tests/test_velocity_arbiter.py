@@ -465,9 +465,7 @@ def test_100_runs_are_bit_deterministic(arbiter: VelocityArbiter) -> None:
     desired = _command(linear_x=1.2, linear_y=-0.7, angular_z=2.5)
     safety = _safety(eval_action=EvaluationAction.CLAMP)
 
-    results = [
-        arbiter.arbitrate(desired, safety, now_ns=NOW_NS) for _ in range(100)
-    ]
+    results = [arbiter.arbitrate(desired, safety, now_ns=NOW_NS) for _ in range(100)]
     canonical_json = [
         json.dumps(
             result.model_dump(mode="json"),

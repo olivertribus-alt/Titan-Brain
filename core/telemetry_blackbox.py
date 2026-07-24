@@ -42,9 +42,7 @@ class TelemetryBlackboxConfig(StrictFrozenModel):
     def validate_bounds(self) -> Self:
         """Keep every snapshot within an explicit deployment bound."""
         if self.post_trigger_frames > self.capacity_frames:
-            raise ValueError(
-                "post-trigger frames must not exceed ring capacity"
-            )
+            raise ValueError("post-trigger frames must not exceed ring capacity")
         return self
 
     @property
@@ -64,8 +62,7 @@ class CommandTelemetry(StrictFrozenModel):
     def validate_finite_command(self) -> Self:
         """Reject non-finite actuator intent or output."""
         if not all(
-            math.isfinite(value)
-            for value in (self.linear_x_mps, self.angular_z_radps)
+            math.isfinite(value) for value in (self.linear_x_mps, self.angular_z_radps)
         ):
             raise ValueError("command telemetry must be finite")
         return self
@@ -289,9 +286,7 @@ class TelemetryBlackbox:
         self._capture_trigger = trigger
         self._capture_reason = checked_reason
         self._capture_trigger_index = len(self._capture_frames) - 1
-        self._remaining_post_trigger_frames = (
-            self._config.post_trigger_frames
-        )
+        self._remaining_post_trigger_frames = self._config.post_trigger_frames
         if self._remaining_post_trigger_frames == 0:
             self._freeze(self._ring[-1].recorded_at_ns)
         return True

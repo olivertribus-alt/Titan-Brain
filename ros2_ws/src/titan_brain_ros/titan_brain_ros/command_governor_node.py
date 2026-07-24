@@ -151,9 +151,7 @@ class CommandGovernorNode(Node):
             max_angular_deceleration_radps2=_parameter_float(
                 self, "max_angular_deceleration_radps2", 2.0
             ),
-            max_linear_jerk_mps3=_parameter_float(
-                self, "max_linear_jerk_mps3", 5.0
-            ),
+            max_linear_jerk_mps3=_parameter_float(self, "max_linear_jerk_mps3", 5.0),
             max_angular_jerk_radps3=_parameter_float(
                 self, "max_angular_jerk_radps3", 5.0
             ),

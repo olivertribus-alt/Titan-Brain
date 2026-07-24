@@ -67,9 +67,7 @@ def generate_test_description() -> LaunchDescription:
     launch_file = package_share / "launch" / "titan_brain.launch.py"
     return LaunchDescription(
         [
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(str(launch_file))
-            ),
+            IncludeLaunchDescription(PythonLaunchDescriptionSource(str(launch_file))),
             launch_testing.actions.ReadyToTest(),
         ]
     )
@@ -433,9 +431,7 @@ class TestTitanBrainTransport(unittest.TestCase):
 
         observation_stream = self._periodic_stream(publish_observation)
         requested_linear_x_mps = (
-            linear_x_mps
-            if command_linear_x_mps is None
-            else command_linear_x_mps
+            linear_x_mps if command_linear_x_mps is None else command_linear_x_mps
         )
         navigation_stream = self._periodic_stream(
             lambda: self._publish_navigation_command(
@@ -450,8 +446,7 @@ class TestTitanBrainTransport(unittest.TestCase):
         self._wait_for(
             lambda: (
                 any(
-                    message.observation_accepted
-                    and message.action == evaluation_action
+                    message.observation_accepted and message.action == evaluation_action
                     for message in self.evaluation_events
                 )
                 and self._has_correlated_command_path(arbitration_reason)
@@ -474,10 +469,7 @@ class TestTitanBrainTransport(unittest.TestCase):
                 or not path.correlation_id
                 or not path.timing_valid
                 or path.observation_to_command_ns
-                != (
-                    path.command_published_timestamp_ns
-                    - path.observation_timestamp_ns
-                )
+                != (path.command_published_timestamp_ns - path.observation_timestamp_ns)
             ):
                 continue
             if not any(
@@ -501,12 +493,9 @@ class TestTitanBrainTransport(unittest.TestCase):
                 status.correlation_id == path.correlation_id
                 and status.reason == path.arbitration_reason
                 and status.command_sequence_id == path.command_sequence_id
-                and status.safety_intent_sequence_id
-                == path.safety_intent_sequence_id
-                and status.motion_envelope_correlation_id
-                == path.correlation_id
-                and status.motion_envelope_sequence_id
-                == path.safety_intent_sequence_id
+                and status.safety_intent_sequence_id == path.safety_intent_sequence_id
+                and status.motion_envelope_correlation_id == path.correlation_id
+                and status.motion_envelope_sequence_id == path.safety_intent_sequence_id
                 for status, _received_at_ns in self.arbitration_events
             ):
                 return True
@@ -648,9 +637,7 @@ class TestTitanBrainTransport(unittest.TestCase):
                     lambda: fault_publisher.publish(fault)
                 )
                 command_stream = self._periodic_stream(
-                    lambda: self._publish_navigation_command(
-                        linear_x_mps=3.0
-                    )
+                    lambda: self._publish_navigation_command(linear_x_mps=3.0)
                 )
 
                 def inject_fault() -> None:
@@ -683,9 +670,7 @@ class TestTitanBrainTransport(unittest.TestCase):
             legacy_stream = self._periodic_stream(
                 lambda: self._publish_legacy_observation(clearance_m=1.2)
             )
-            navigation_stream = self._periodic_stream(
-                self._publish_navigation_command
-            )
+            navigation_stream = self._periodic_stream(self._publish_navigation_command)
 
             def keep_legacy_inputs_fresh() -> None:
                 legacy_stream()
@@ -750,8 +735,7 @@ class TestTitanBrainTransport(unittest.TestCase):
             )
             self._wait_for(
                 lambda: any(
-                    message.linear.x == 0.0
-                    and received_ns >= published_at_ns
+                    message.linear.x == 0.0 and received_ns >= published_at_ns
                     for message, received_ns in self.cmd_vel_events
                 ),
                 failure_message="Emergency zero was not observed on /cmd_vel.",
@@ -760,8 +744,7 @@ class TestTitanBrainTransport(unittest.TestCase):
                 lambda: any(
                     message.correlation_id == stop_status.correlation_id
                     and message.arbitration_reason == "e_stop_active"
-                    and message.arbitration_mode
-                    == ArbitrationStatus.MODE_FORCED_ZERO
+                    and message.arbitration_mode == ArbitrationStatus.MODE_FORCED_ZERO
                     and message.timing_valid
                     for message in self.command_path_events
                 ),
@@ -775,9 +758,7 @@ class TestTitanBrainTransport(unittest.TestCase):
             observation_stream = self._periodic_stream(
                 lambda: self._publish_observation(clearance_m=1.2)
             )
-            navigation_stream = self._periodic_stream(
-                self._publish_navigation_command
-            )
+            navigation_stream = self._periodic_stream(self._publish_navigation_command)
 
             def keep_safe_inputs_fresh() -> None:
                 observation_stream()
@@ -786,8 +767,7 @@ class TestTitanBrainTransport(unittest.TestCase):
             self._wait_for(
                 lambda: (
                     any(
-                        message.state
-                        == SafetyStabilityStatus.STATE_RECOVERY_HOLDING
+                        message.state == SafetyStabilityStatus.STATE_RECOVERY_HOLDING
                         and message.instantaneous_action == "proceed"
                         and message.effective_action == "emergency_stop"
                         and message.recovery_active
@@ -863,9 +843,7 @@ class TestTitanBrainTransport(unittest.TestCase):
             )
             self.arbitration_events.clear()
             self.cmd_vel_events.clear()
-            navigation_stream = self._periodic_stream(
-                self._publish_navigation_command
-            )
+            navigation_stream = self._periodic_stream(self._publish_navigation_command)
             self._wait_for_arbitration_reason(
                 "motion_envelope_timeout",
                 on_cycle=navigation_stream,

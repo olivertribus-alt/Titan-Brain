@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Coroutine, Protocol
+from collections.abc import Coroutine
+from typing import Protocol
 
 from pydantic import ValidationError
 
@@ -138,14 +139,10 @@ class CognitiveBus:
         report = await self._dispatch(message)
         latency_ns = time.monotonic_ns() - start_ns
         for observer in self._observers:
-            self._notify(
-                observer.on_dispatch_complete(message, report, latency_ns)
-            )
+            self._notify(observer.on_dispatch_complete(message, report, latency_ns))
         return report
 
-    async def _dispatch(
-        self, message: CognitiveMessage[BasePayload]
-    ) -> DeliveryReport:
+    async def _dispatch(self, message: CognitiveMessage[BasePayload]) -> DeliveryReport:
         """Route a validated message and collect delivery outcomes."""
         payload_type = message.payload.payload_type
         subscribers = self._routing_index.get(payload_type, set())

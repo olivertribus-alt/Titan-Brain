@@ -125,9 +125,7 @@ def test_fresh_stopped_feedback_publishes_acknowledgement() -> None:
         assert node.last_result.state.value == "stop_acknowledged"
         assert node.last_result.acknowledgement is not None
         assert node.last_status is not None
-        assert node.last_status.state == (
-            node.last_status.STATE_STOP_ACKNOWLEDGED
-        )
+        assert node.last_status.state == (node.last_status.STATE_STOP_ACKNOWLEDGED)
         assert node.last_status.is_stopped is True
         assert node.last_status.latched_fault is False
         assert node.last_status.feedback_sequence_id == 1
@@ -152,9 +150,7 @@ def test_invalid_feedback_publishes_critical_latch() -> None:
         assert node.last_status is not None
         assert node.last_status.latched_fault is True
         assert node.last_status.critical is True
-        assert node.last_status.priority == (
-            node.last_status.PRIORITY_CRITICAL
-        )
+        assert node.last_status.priority == (node.last_status.PRIORITY_CRITICAL)
     finally:
         node.destroy_node()
         rclpy.shutdown()

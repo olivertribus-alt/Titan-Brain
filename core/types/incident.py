@@ -133,8 +133,7 @@ def migrate_v01_to_v02(payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
         raise ValueError("Legacy field 'evidence' must be an object.")
 
     migrated_evidence: dict[str, JsonValue] = {
-        key: {"label": key, "value": value}
-        for key, value in legacy_evidence.items()
+        key: {"label": key, "value": value} for key, value in legacy_evidence.items()
     }
     return {
         "schema_version": "0.2",

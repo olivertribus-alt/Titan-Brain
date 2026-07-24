@@ -71,9 +71,7 @@ class StoppingDistanceBreakdown(StrictFrozenModel):
     def validate_sum(self) -> Self:
         """Keep the reported total identical to its evidence terms."""
         expected = (
-            self.reaction_distance_m
-            + self.braking_distance_m
-            + self.clearance_margin_m
+            self.reaction_distance_m + self.braking_distance_m + self.clearance_margin_m
         )
         if self.required_clearance_m != expected:
             raise ValueError("required clearance must equal its evidence terms")
@@ -134,18 +132,18 @@ class BrakingEnvelopeAssessment(StrictFrozenModel):
             raise ValueError("assessments must contain every sector in order")
 
         active = [item for item in self.assessments if item.active]
-        expected_safe = all(
-            item.clearance_sufficient is True for item in active
-        )
+        expected_safe = all(item.clearance_sufficient is True for item in active)
         if self.safe_to_proceed is not expected_safe:
             raise ValueError("safe_to_proceed does not match sector evidence")
 
         expected_limiting = (
             min(
                 active,
-                key=lambda item: item.clearance_surplus_m
-                if item.clearance_surplus_m is not None
-                else math.inf,
+                key=lambda item: (
+                    item.clearance_surplus_m
+                    if item.clearance_surplus_m is not None
+                    else math.inf
+                ),
             ).sector
             if active
             else None
@@ -166,13 +164,11 @@ def calculate_stopping_distance(
     try:
         reaction_time_s = config.reaction_time_ns / NANOSECONDS_PER_SECOND
         reaction_distance_m = closing_speed_mps * reaction_time_s
-        braking_distance_m = (
-            closing_speed_mps * closing_speed_mps
-        ) / (2.0 * config.assured_deceleration_mps2)
+        braking_distance_m = (closing_speed_mps * closing_speed_mps) / (
+            2.0 * config.assured_deceleration_mps2
+        )
         required_clearance_m = (
-            reaction_distance_m
-            + braking_distance_m
-            + config.clearance_margin_m
+            reaction_distance_m + braking_distance_m + config.clearance_margin_m
         )
     except OverflowError as error:
         raise ValueError("stopping-distance calculation overflowed") from error
@@ -214,9 +210,7 @@ def _assess_sector(
         closing_speed_mps,
         config,
     )
-    clearance_surplus_m = (
-        observed_clearance_m - stopping_distance.required_clearance_m
-    )
+    clearance_surplus_m = observed_clearance_m - stopping_distance.required_clearance_m
     if clearance_surplus_m == 0.0:
         clearance_surplus_m = 0.0
     return SectorBrakingAssessment(
@@ -271,9 +265,11 @@ def assess_braking_envelope(
     limiting_sector = (
         min(
             active,
-            key=lambda item: item.clearance_surplus_m
-            if item.clearance_surplus_m is not None
-            else math.inf,
+            key=lambda item: (
+                item.clearance_surplus_m
+                if item.clearance_surplus_m is not None
+                else math.inf
+            ),
         ).sector
         if active
         else None
@@ -281,8 +277,6 @@ def assess_braking_envelope(
     return BrakingEnvelopeAssessment(
         policy_version=config.policy_version,
         assessments=assessments,
-        safe_to_proceed=all(
-            item.clearance_sufficient is True for item in active
-        ),
+        safe_to_proceed=all(item.clearance_sufficient is True for item in active),
         limiting_sector=limiting_sector,
     )

@@ -59,12 +59,9 @@ class SafetyObservation(StrictFrozenModel):
         """Reject contradictory legacy and directional frontal clearance."""
         if (
             self.directional_data is not None
-            and self.clearance_m
-            != self.directional_data.clearances.forward_m
+            and self.clearance_m != self.directional_data.clearances.forward_m
         ):
-            raise ValueError(
-                "clearance_m must equal directional forward clearance"
-            )
+            raise ValueError("clearance_m must equal directional forward clearance")
         return self
 
 
@@ -188,9 +185,7 @@ def _dynamic_evidence(
     )
     limiting_sector = cast(DirectionalSector, assessment.limiting_sector)
     limiting = next(
-        item
-        for item in assessment.assessments
-        if item.sector is limiting_sector
+        item for item in assessment.assessments if item.sector is limiting_sector
     )
     stopping = cast(StoppingDistanceBreakdown, limiting.stopping_distance)
     evidence["clearance"] = EvidenceValue(
@@ -249,9 +244,7 @@ def _dynamic_policy(
         evidence = _base_evidence(observation, rules)
         evidence["angular_velocity"] = EvidenceValue(
             label="Unsupported Angular Velocity",
-            description=(
-                "TB-EVAL-002A has no angular swept-footprint braking model."
-            ),
+            description=("TB-EVAL-002A has no angular swept-footprint braking model."),
             value=directional.velocity.angular_z_radps,
             observed=directional.velocity.angular_z_radps,
             threshold=0.0,

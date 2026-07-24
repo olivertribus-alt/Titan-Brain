@@ -32,9 +32,7 @@ class TraceRegistry(BusObserver):
         self._max_records = max_records
         self._records: OrderedDict[str, TraceRecord] = OrderedDict()
 
-    async def on_message_received(
-        self, message: CognitiveMessage[BasePayload]
-    ) -> None:
+    async def on_message_received(self, message: CognitiveMessage[BasePayload]) -> None:
         """Accept the validated-message event without retaining transient state."""
         return None
 

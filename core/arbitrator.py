@@ -138,10 +138,7 @@ class PermittedMotionEnvelope(StrictFrozenModel):
     @model_validator(mode="after")
     def enforce_fail_closed_angular_policy(self) -> Self:
         """Reject angular authority until swept-footprint proof exists."""
-        if (
-            self.min_angular_z_radps != 0.0
-            or self.max_angular_z_radps != 0.0
-        ):
+        if self.min_angular_z_radps != 0.0 or self.max_angular_z_radps != 0.0:
             raise ValueError(
                 "angular limits must remain zero without a swept-footprint model"
             )
@@ -201,10 +198,7 @@ class VelocityArbiterConfig(StrictFrozenModel):
             (self.warning_max_abs_linear_y, self.max_abs_linear_y),
             (self.warning_max_abs_angular_z, self.max_abs_angular_z),
         )
-        if any(
-            warning is not None and warning > nominal
-            for warning, nominal in pairs
-        ):
+        if any(warning is not None and warning > nominal for warning, nominal in pairs):
             raise ValueError("WARNING limits must not exceed nominal limits")
         return self
 
@@ -226,9 +220,7 @@ class ArbitrationResult(StrictFrozenModel):
                 ArbitrationReason.PROCEED,
                 ArbitrationReason.WARNING_UNMODIFIED,
             }:
-                raise ValueError(
-                    "PASS_THROUGH requires a pass-through policy reason"
-                )
+                raise ValueError("PASS_THROUGH requires a pass-through policy reason")
         elif self.mode is ArbitrationMode.CLAMPED:
             if self.reason not in {
                 ArbitrationReason.CLAMP_POLICY,
@@ -642,9 +634,7 @@ class DynamicSafetyCommandArbiter:
         if intent is None or intent.state is not SafetyIntentState.NORMAL:
             return None
 
-        envelope, envelope_was_supplied = _parse_motion_envelope(
-            motion_envelope
-        )
+        envelope, envelope_was_supplied = _parse_motion_envelope(motion_envelope)
         if envelope is None:
             return (
                 ArbitrationReason.MOTION_ENVELOPE_INVALID
@@ -688,9 +678,7 @@ class DynamicSafetyCommandArbiter:
         self._requires_new_normal = True
         self._release_sequence_id = None
         sequence_id = (
-            intent.sequence_id
-            if intent is not None
-            else self._last_intent_sequence_id
+            intent.sequence_id if intent is not None else self._last_intent_sequence_id
         )
         if sequence_id is not None:
             self._blocked_after_intent_sequence_id = max(
@@ -733,14 +721,11 @@ class DynamicSafetyCommandArbiter:
                 timestamp_ns=checked_now_ns,
             )
         correlation_id = intent.correlation_id
-        if (
-            self._last_intent_sequence_id is not None
-            and (
-                intent.sequence_id < self._last_intent_sequence_id
-                or (
-                    intent.sequence_id == self._last_intent_sequence_id
-                    and intent != self._last_intent
-                )
+        if self._last_intent_sequence_id is not None and (
+            intent.sequence_id < self._last_intent_sequence_id
+            or (
+                intent.sequence_id == self._last_intent_sequence_id
+                and intent != self._last_intent
             )
         ):
             self._latch(intent)
@@ -809,14 +794,11 @@ class DynamicSafetyCommandArbiter:
                 timestamp_ns=checked_now_ns,
                 correlation_id=correlation_id,
             )
-        if (
-            self._last_command_sequence_id is not None
-            and (
-                velocity.sequence_id < self._last_command_sequence_id
-                or (
-                    velocity.sequence_id == self._last_command_sequence_id
-                    and velocity != self._last_command
-                )
+        if self._last_command_sequence_id is not None and (
+            velocity.sequence_id < self._last_command_sequence_id
+            or (
+                velocity.sequence_id == self._last_command_sequence_id
+                and velocity != self._last_command
             )
         ):
             self._latch(intent)
@@ -912,9 +894,7 @@ class DynamicSafetyCommandArbiter:
             _parse_safety_intent(safety_intent)[0],
         )
 
-        envelope, envelope_was_supplied = _parse_motion_envelope(
-            motion_envelope
-        )
+        envelope, envelope_was_supplied = _parse_motion_envelope(motion_envelope)
         if envelope is None:
             self._latch(intent)
             return self._zero(

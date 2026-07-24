@@ -33,20 +33,12 @@ class AngularMotionPolicyStatus(StrEnum):
     """Why TB-EVAL-005B grants no angular motion authority."""
 
     BLOCKED_INSUFFICIENT_CLEARANCE = "blocked_insufficient_clearance"
-    BLOCKED_SWEPT_FOOTPRINT_UNAVAILABLE = (
-        "blocked_swept_footprint_unavailable"
-    )
+    BLOCKED_SWEPT_FOOTPRINT_UNAVAILABLE = "blocked_swept_footprint_unavailable"
 
 
 def _checked_clearance(value: object) -> float:
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or value < 0
-    ):
-        raise ValueError(
-            "observed_clearance_m must be a non-negative finite number"
-        )
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        raise ValueError("observed_clearance_m must be a non-negative finite number")
     try:
         checked = float(value)
     except OverflowError as error:
@@ -54,9 +46,7 @@ def _checked_clearance(value: object) -> float:
             "observed_clearance_m must be a non-negative finite number"
         ) from error
     if not math.isfinite(checked):
-        raise ValueError(
-            "observed_clearance_m must be a non-negative finite number"
-        )
+        raise ValueError("observed_clearance_m must be a non-negative finite number")
     return 0.0 if checked == 0.0 else checked
 
 
@@ -102,19 +92,15 @@ def _solve_max_closing_speed(
         context.prec = _DECIMAL_PRECISION
         deceleration = Decimal(str(config.assured_deceleration_mps2))
         reaction_time = Decimal(str(reaction_time_s))
-        available = (
-            Decimal(str(observed_clearance_m))
-            - Decimal(str(config.clearance_margin_m))
+        available = Decimal(str(observed_clearance_m)) - Decimal(
+            str(config.clearance_margin_m)
         )
         reaction_term = deceleration * reaction_time
         discriminant = (
-            reaction_term * reaction_term
-            + Decimal(2) * deceleration * available
+            reaction_term * reaction_term + Decimal(2) * deceleration * available
         )
         root = discriminant.sqrt()
-        exact_limit = (
-            Decimal(2) * deceleration * available
-        ) / (root + reaction_term)
+        exact_limit = (Decimal(2) * deceleration * available) / (root + reaction_term)
 
     candidate = float(exact_limit)
     if not math.isfinite(candidate):
@@ -123,9 +109,8 @@ def _solve_max_closing_speed(
         return 0.0
 
     for _ in range(_MAX_ADJUSTMENT_STEPS):
-        if (
-            Decimal(str(candidate)) <= exact_limit
-            and _forward_model_accepts(candidate, observed_clearance_m, config)
+        if Decimal(str(candidate)) <= exact_limit and _forward_model_accepts(
+            candidate, observed_clearance_m, config
         ):
             break
         candidate = math.nextafter(candidate, 0.0)
@@ -222,13 +207,8 @@ class DirectionalMotionEnvelope(StrictFrozenModel):
         if actual_order != tuple(DirectionalSector):
             raise ValueError("sector limits must contain every sector in order")
 
-        speed_limits = tuple(
-            item.speed_limit for item in self.sector_limits
-        )
-        if any(
-            item.policy_version != self.policy_version
-            for item in speed_limits
-        ):
+        speed_limits = tuple(item.speed_limit for item in self.sector_limits)
+        if any(item.policy_version != self.policy_version for item in speed_limits):
             raise ValueError("sector policy versions must match the envelope")
         physical_assumptions = {
             (
@@ -254,16 +234,9 @@ class DirectionalMotionEnvelope(StrictFrozenModel):
         if self.velocity_limits != expected_limits:
             raise ValueError("velocity limits do not match sector evidence")
 
-        expected_all_directions = all(
-            not item.stop_only for item in speed_limits
-        )
-        if (
-            self.translation_permitted_in_all_directions
-            is not expected_all_directions
-        ):
-            raise ValueError(
-                "omnidirectional translation status does not match limits"
-            )
+        expected_all_directions = all(not item.stop_only for item in speed_limits)
+        if self.translation_permitted_in_all_directions is not expected_all_directions:
+            raise ValueError("omnidirectional translation status does not match limits")
         expected_angular_status = (
             AngularMotionPolicyStatus.BLOCKED_SWEPT_FOOTPRINT_UNAVAILABLE
             if expected_all_directions

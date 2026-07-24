@@ -398,8 +398,9 @@ def test_relay_clock_regression_latches() -> None:
     assert result.reason is SafetyReason.RELAY_CLOCK_REGRESSION
 
 
-def test_reset_requires_open_feedback_healthy_heartbeats_and_authorized_sequence(
-) -> None:
+def test_reset_requires_open_feedback_healthy_heartbeats_and_authorized_sequence() -> (
+    None
+):
     supervisor = _supervisor()
     supervisor.latch_hardware_fault(now_ns=1, detail="weld test")
 

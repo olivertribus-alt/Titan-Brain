@@ -63,9 +63,9 @@ def test_devcontainer_builds_the_same_image_and_mounts_the_same_workspace() -> N
 
 
 def test_constraints_pin_all_direct_project_and_quality_dependencies() -> None:
-    constraints = (
-        REPOSITORY_ROOT / "requirements" / "constraints.txt"
-    ).read_text(encoding="utf-8")
+    constraints = (REPOSITORY_ROOT / "requirements" / "constraints.txt").read_text(
+        encoding="utf-8"
+    )
 
     for package in ("pydantic", "mypy", "pytest", "pytest-cov", "ruff"):
         assert f"{package}==" in constraints

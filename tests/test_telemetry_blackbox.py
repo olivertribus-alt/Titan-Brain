@@ -48,9 +48,7 @@ def _frame(
     complete: bool = True,
 ) -> TelemetryBlackboxFrame:
     effective_timestamp = (
-        sequence_id * 20_000_000
-        if timestamp_ns is None
-        else timestamp_ns
+        sequence_id * 20_000_000 if timestamp_ns is None else timestamp_ns
     )
     if not complete:
         return TelemetryBlackboxFrame(
@@ -108,9 +106,7 @@ def test_rolling_ring_evicts_oldest_frame_at_fixed_capacity() -> None:
         blackbox.record(_frame(sequence_id))
 
     assert blackbox.frame_count == 3
-    assert [
-        frame.sequence_id for frame in blackbox.rolling_frames()
-    ] == [3, 4, 5]
+    assert [frame.sequence_id for frame in blackbox.rolling_frames()] == [3, 4, 5]
     assert blackbox.state.value == BlackboxState.ARMED.value
 
 
@@ -293,8 +289,7 @@ def test_snapshot_json_is_stable_structured_and_immutable() -> None:
         payloads.append(blackbox.snapshot_json(indent=2))
 
     hashes = {
-        hashlib.sha256(payload.encode("utf-8")).hexdigest()
-        for payload in payloads
+        hashlib.sha256(payload.encode("utf-8")).hexdigest() for payload in payloads
     }
     decoded = json.loads(payloads[0])
     assert decoded["trigger"] == "manual"

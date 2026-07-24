@@ -186,9 +186,7 @@ def test_opposing_closing_speeds_are_rejected(
 )
 def test_invalid_physical_inputs_are_rejected(
     model: type[
-        DirectionalClearances
-        | DirectionalClosingSpeeds
-        | BrakingEnvelopeConfig
+        DirectionalClearances | DirectionalClosingSpeeds | BrakingEnvelopeConfig
     ],
     field: str,
     value: float | int,
@@ -244,15 +242,9 @@ def test_assessment_is_bit_stable_for_identical_inputs(
     clearances = _clearances(forward_m=0.7, right_m=0.3)
     speeds = _speeds(forward_mps=0.8, right_mps=0.2)
 
-    results = [
-        assess_braking_envelope(clearances, speeds, config)
-        for _ in range(100)
-    ]
+    results = [assess_braking_envelope(clearances, speeds, config) for _ in range(100)]
     serialized = [result.model_dump_json() for result in results]
-    hashes = {
-        hashlib.sha256(item.encode("utf-8")).hexdigest()
-        for item in serialized
-    }
+    hashes = {hashlib.sha256(item.encode("utf-8")).hexdigest() for item in serialized}
 
     assert all(result == results[0] for result in results)
     assert len(set(serialized)) == 1

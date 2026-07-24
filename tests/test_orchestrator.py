@@ -58,9 +58,7 @@ class ControlledModule(BaseModule):
 def test_start_failure_retries_cleans_up_and_rolls_back_prior_modules() -> None:
     bus = CognitiveBus()
     first = ControlledModule(create_module_id("First"), bus)
-    failing = ControlledModule(
-        create_module_id("Failing"), bus, start_failures=2
-    )
+    failing = ControlledModule(create_module_id("Failing"), bus, start_failures=2)
     orchestrator = LifecycleOrchestrator(
         [first, failing],
         RetryPolicy(max_retries=1, initial_delay=0.0),

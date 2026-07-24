@@ -78,9 +78,7 @@ class StopRequest(StrictFrozenModel):
             payload["sequence_id"] = payload.pop("sequence")
         if "timestamp_ns" not in payload:
             if "requested_timestamp" in payload:
-                payload["requested_timestamp_ns"] = payload.pop(
-                    "requested_timestamp"
-                )
+                payload["requested_timestamp_ns"] = payload.pop("requested_timestamp")
             elif "timestamp" in payload:
                 payload["requested_timestamp_ns"] = payload.pop("timestamp")
         return payload

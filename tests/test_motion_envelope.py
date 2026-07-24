@@ -34,9 +34,7 @@ def _exact_required_clearance(
     with localcontext() as context:
         context.prec = 100
         speed = Decimal(str(speed_mps))
-        reaction_time = Decimal(config.reaction_time_ns) / Decimal(
-            1_000_000_000
-        )
+        reaction_time = Decimal(config.reaction_time_ns) / Decimal(1_000_000_000)
         deceleration = Decimal(str(config.assured_deceleration_mps2))
         return (
             speed * reaction_time
@@ -105,10 +103,13 @@ def test_forward_then_inverse_model_never_authorizes_more_than_boundary(
     next_speed = math.nextafter(limit.max_closing_speed_mps, math.inf)
 
     assert limit.max_closing_speed_mps <= speed_mps
-    assert calculate_stopping_distance(
-        limit.max_closing_speed_mps,
-        config,
-    ).required_clearance_m <= clearance
+    assert (
+        calculate_stopping_distance(
+            limit.max_closing_speed_mps,
+            config,
+        ).required_clearance_m
+        <= clearance
+    )
     assert _exact_required_clearance(
         next_speed,
         config,
@@ -197,15 +198,9 @@ def test_positive_clearance_that_underflows_speed_grants_stop_only() -> None:
 def test_result_is_bit_stable_for_identical_inputs(
     config: BrakingEnvelopeConfig,
 ) -> None:
-    results = [
-        calculate_permitted_speed_limit(1.23456789, config)
-        for _ in range(100)
-    ]
+    results = [calculate_permitted_speed_limit(1.23456789, config) for _ in range(100)]
     serialized = [result.model_dump_json() for result in results]
-    hashes = {
-        hashlib.sha256(item.encode("utf-8")).hexdigest()
-        for item in serialized
-    }
+    hashes = {hashlib.sha256(item.encode("utf-8")).hexdigest() for item in serialized}
 
     assert all(result == results[0] for result in results)
     assert len(set(serialized)) == 1
@@ -219,21 +214,15 @@ def test_immutable_contract_rejects_inconsistent_evidence(
     baseline = valid.model_dump(mode="python")
 
     with pytest.raises(ValidationError, match="available clearance"):
-        PermittedSpeedLimit.model_validate(
-            {**baseline, "available_clearance_m": 0.49}
-        )
+        PermittedSpeedLimit.model_validate({**baseline, "available_clearance_m": 0.49})
     with pytest.raises(ValidationError, match="maximum speed"):
-        PermittedSpeedLimit.model_validate(
-            {**baseline, "max_closing_speed_mps": 0.99}
-        )
+        PermittedSpeedLimit.model_validate({**baseline, "max_closing_speed_mps": 0.99})
     with pytest.raises(ValidationError, match="speed status"):
         PermittedSpeedLimit.model_validate(
             {**baseline, "status": PermittedSpeedStatus.STOP_ONLY}
         )
     with pytest.raises(ValidationError):
-        PermittedSpeedLimit.model_validate(
-            {**baseline, "schema_version": "0.2"}
-        )
+        PermittedSpeedLimit.model_validate({**baseline, "schema_version": "0.2"})
 
 
 def test_models_are_strict_and_frozen(

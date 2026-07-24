@@ -76,8 +76,7 @@ def test_directional_limits_map_to_signed_ros_body_axes(
         DirectionalSector
     )
     assert tuple(
-        item.speed_limit.max_closing_speed_mps
-        for item in envelope.sector_limits
+        item.speed_limit.max_closing_speed_mps for item in envelope.sector_limits
     ) == (1.0, 0.5, 0.25, 0.75)
     assert envelope.velocity_limits == PlanarVelocityLimits(
         min_linear_x_mps=-0.5,
@@ -118,9 +117,7 @@ def test_each_clearance_controls_only_its_direction(
 
     assert changed_by_sector[sector].stop_only is True
     assert getattr(changed.velocity_limits, axis_field) == 0.0
-    assert math_copysign_is_positive_zero(
-        getattr(changed.velocity_limits, axis_field)
-    )
+    assert math_copysign_is_positive_zero(getattr(changed.velocity_limits, axis_field))
     for unchanged_sector in DirectionalSector:
         if unchanged_sector is not sector:
             assert (
@@ -181,10 +178,7 @@ def test_directional_result_is_bit_stable(
         for _ in range(100)
     ]
     serialized = [result.model_dump_json() for result in results]
-    hashes = {
-        hashlib.sha256(item.encode("utf-8")).hexdigest()
-        for item in serialized
-    }
+    hashes = {hashlib.sha256(item.encode("utf-8")).hexdigest() for item in serialized}
 
     assert all(result == results[0] for result in results)
     assert len(set(serialized)) == 1
@@ -213,9 +207,9 @@ def test_directional_contract_rejects_forged_evidence(
 
     with pytest.raises(ValidationError, match="every sector in order"):
         DirectionalMotionEnvelope.model_validate(
-            valid.model_copy(
-                update={"sector_limits": reversed_limits}
-            ).model_dump(mode="python")
+            valid.model_copy(update={"sector_limits": reversed_limits}).model_dump(
+                mode="python"
+            )
         )
     with pytest.raises(ValidationError, match="policy versions"):
         DirectionalMotionEnvelope.model_validate(
@@ -262,9 +256,7 @@ def test_directional_contract_rejects_forged_evidence(
     with pytest.raises(ValidationError, match="translation status"):
         DirectionalMotionEnvelope.model_validate(
             valid.model_copy(
-                update={
-                    "translation_permitted_in_all_directions": False
-                }
+                update={"translation_permitted_in_all_directions": False}
             ).model_dump(mode="python")
         )
     with pytest.raises(ValidationError, match="angular policy status"):

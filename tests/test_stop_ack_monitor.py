@@ -79,8 +79,7 @@ def test_monitor_starts_idle_and_does_not_ack_without_request(
     assert monitor.config is monitor.config
     assert monitor._budget_expired(100) is False
     assert (
-        monitor.reset_fault(None, now_ns=100).reason
-        is StopAckReason.RESET_NOT_REQUIRED
+        monitor.reset_fault(None, now_ns=100).reason is StopAckReason.RESET_NOT_REQUIRED
     )
 
 
@@ -434,9 +433,7 @@ def test_acknowledged_state_latches_on_faulty_follow_up_feedback(
 
     result = monitor.observe_feedback(
         feedback,
-        now_ns=(
-            160 if expected_reason is StopAckReason.STALE_FEEDBACK else 120
-        ),
+        now_ns=(160 if expected_reason is StopAckReason.STALE_FEEDBACK else 120),
     )
 
     assert result.state is StopMonitorState.HARDWARE_FAULT_LATCH

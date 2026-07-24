@@ -69,9 +69,8 @@ def _stamp_ns(
         | TwistStamped
     ),
 ) -> int:
-    return (
-        int(message.header.stamp.sec) * 1_000_000_000
-        + int(message.header.stamp.nanosec)
+    return int(message.header.stamp.sec) * 1_000_000_000 + int(
+        message.header.stamp.nanosec
     )
 
 
@@ -82,9 +81,7 @@ def generate_test_description() -> LaunchDescription:
     launch_file = package_share / "launch" / "safety_control_plane.launch.py"
     return LaunchDescription(
         [
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(str(launch_file))
-            ),
+            IncludeLaunchDescription(PythonLaunchDescriptionSource(str(launch_file))),
             launch_testing.actions.ReadyToTest(),
         ]
     )
@@ -169,23 +166,11 @@ class TestDynamicEnvelopeFaultInjection(unittest.TestCase):
         self._spin_until(
             lambda: (
                 self.node.count_subscribers("/teleop/cmd_vel") == 2
-                and self.node.count_subscribers(
-                    "/safety/system_fault_status"
-                )
-                == 4
+                and self.node.count_subscribers("/safety/system_fault_status") == 4
                 and self.node.count_subscribers("/scan") == 1
-                and self.node.count_publishers(
-                    "/safety/permitted_motion_envelope"
-                )
-                == 1
-                and self.node.count_publishers(
-                    "/safety/envelope_diagnostics"
-                )
-                == 1
-                and self.node.count_publishers(
-                    "/safety/lifecycle_status"
-                )
-                == 1
+                and self.node.count_publishers("/safety/permitted_motion_envelope") == 1
+                and self.node.count_publishers("/safety/envelope_diagnostics") == 1
+                and self.node.count_publishers("/safety/lifecycle_status") == 1
                 and self.node.count_publishers("/cmd_vel") == 1
             ),
             timeout_sec=_DISCOVERY_TIMEOUT_SEC,
@@ -251,9 +236,7 @@ class TestDynamicEnvelopeFaultInjection(unittest.TestCase):
         scan = LaserScan()
         scan.header.frame_id = frame_id
         effective_timestamp_ns = (
-            self._next_scan_timestamp_ns()
-            if timestamp_ns is None
-            else timestamp_ns
+            self._next_scan_timestamp_ns() if timestamp_ns is None else timestamp_ns
         )
         self._set_stamp(scan, effective_timestamp_ns)
         scan.angle_min = -math.pi
@@ -261,9 +244,7 @@ class TestDynamicEnvelopeFaultInjection(unittest.TestCase):
         scan.angle_increment = (2.0 * math.pi) / 360
         scan.range_min = 0.1
         scan.range_max = 10.0
-        scan.ranges = [
-            distance_m if fill_value is None else fill_value
-        ] * 360
+        scan.ranges = [distance_m if fill_value is None else fill_value] * 360
         if ghost_obstacle:
             scan.ranges[180] = 0.2
         return scan
@@ -292,13 +273,8 @@ class TestDynamicEnvelopeFaultInjection(unittest.TestCase):
                     and message.reason == "NOMINAL_AUTHORITY"
                     for message in self.diagnostics
                 )
-                and any(
-                    message.max_linear_x_mps > 0.0
-                    for message in self.envelopes
-                )
-                and any(
-                    message.twist.linear.x > 0.0 for message in self.outputs
-                )
+                and any(message.max_linear_x_mps > 0.0 for message in self.envelopes)
+                and any(message.twist.linear.x > 0.0 for message in self.outputs)
             ),
             on_cycle=self._periodic_stream(self._publish_frame),
         )
@@ -368,8 +344,7 @@ class TestDynamicEnvelopeFaultInjection(unittest.TestCase):
         self.assertEqual(status.commanded_twist.angular.z, 0.0)
         self.assertTrue(
             any(
-                message.twist.linear.x == 0.0
-                and message.twist.angular.z == 0.0
+                message.twist.linear.x == 0.0 and message.twist.angular.z == 0.0
                 for message in self.outputs
             )
         )
@@ -395,8 +370,7 @@ class TestDynamicEnvelopeFaultInjection(unittest.TestCase):
                 )
                 is not None
                 and any(
-                    message.twist.linear.x == 0.0
-                    and message.twist.angular.z == 0.0
+                    message.twist.linear.x == 0.0 and message.twist.angular.z == 0.0
                     for message in self.outputs
                 )
             ),
@@ -435,9 +409,7 @@ class TestDynamicEnvelopeFaultInjection(unittest.TestCase):
             )
             diagnostic = self._assert_stop(
                 diagnostics_reason="CLEARANCE_REQUIRES_STOP",
-                diagnostics_state=(
-                    EnvelopeDiagnostics.STATE_PROTECTIVE_STOP
-                ),
+                diagnostics_state=(EnvelopeDiagnostics.STATE_PROTECTIVE_STOP),
             )
             reaction_ns = _stamp_ns(diagnostic) - injected_at_ns
             self.assertGreaterEqual(reaction_ns, 0)
@@ -485,9 +457,7 @@ class TestDynamicEnvelopeFaultInjection(unittest.TestCase):
             self._clear_observations()
 
             def publish_hardware_fault() -> None:
-                self._publish_frame(
-                    fault_state=SystemFaultStatus.FAULT_HARDWARE_FAULT
-                )
+                self._publish_frame(fault_state=SystemFaultStatus.FAULT_HARDWARE_FAULT)
 
             self._wait_for_stop(
                 diagnostics_reason="SYSTEM_FAULT_HARDWARE_FAULT",
@@ -504,9 +474,7 @@ class TestDynamicEnvelopeFaultInjection(unittest.TestCase):
         with self.subTest("sticky scan clock regression"):
             self._clear_observations()
             regressed_timestamp_ns = self.last_scan_timestamp_ns - 1
-            self.scan.publish(
-                self._scan_message(timestamp_ns=regressed_timestamp_ns)
-            )
+            self.scan.publish(self._scan_message(timestamp_ns=regressed_timestamp_ns))
             self._publish_control()
             self._wait_for_stop(
                 diagnostics_reason="CLOCK_REGRESSION_LATCHED",

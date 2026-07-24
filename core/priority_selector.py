@@ -130,9 +130,7 @@ class PrioritySelectorCore:
             return False, "UNKNOWN_SOURCE_PRIORITY"
         if frame.priority is not expected_priority:
             return False, "SOURCE_PRIORITY_MISMATCH"
-        if not _finite_number(frame.linear_x) or not _finite_number(
-            frame.angular_z
-        ):
+        if not _finite_number(frame.linear_x) or not _finite_number(frame.angular_z):
             return False, "NON_FINITE_COMMAND"
         if not isinstance(frame.source_id, str) or not frame.source_id.strip():
             return False, "INVALID_SOURCE_ID"

@@ -64,10 +64,7 @@ class ArbitrationLatencyMeasurement(StrictFrozenModel):
                 or self.detail is not None
             ):
                 raise ValueError("valid timing requires both timestamps and latency")
-            if (
-                self.command_published_ns - self.intent_received_ns
-                != self.latency_ns
-            ):
+            if self.command_published_ns - self.intent_received_ns != self.latency_ns:
                 raise ValueError("latency must equal publish minus intent receipt")
             if self.within_budget != (self.latency_ns <= self.budget_ns):
                 raise ValueError("latency status must match the configured budget")
@@ -156,9 +153,7 @@ class EvaluatorTimingSample(StrictFrozenModel):
                 raise ValueError("evaluator latency must match its timestamps")
             if self.latency_status not in {"within_budget", "budget_exceeded"}:
                 raise ValueError("valid evaluator timing requires a valid status")
-            if (self.latency_status == "within_budget") == bool(
-                self.exceeded_budgets
-            ):
+            if (self.latency_status == "within_budget") == bool(self.exceeded_budgets):
                 raise ValueError("evaluator status must match exceeded budgets")
         elif any(value is not None for value in values) or self.detail is None:
             raise ValueError("invalid evaluator timing requires only detail")
@@ -269,9 +264,7 @@ class CommandPathObservability:
     def __init__(self, config: CommandPathObservabilityConfig) -> None:
         self._config = config
         self._evaluators: OrderedDict[str, EvaluatorTimingSample] = OrderedDict()
-        self._pending: OrderedDict[
-            str, list[ArbitrationTimingSample]
-        ] = OrderedDict()
+        self._pending: OrderedDict[str, list[ArbitrationTimingSample]] = OrderedDict()
 
     @property
     def config(self) -> CommandPathObservabilityConfig:
@@ -341,9 +334,7 @@ class CommandPathObservability:
                 evaluator,
                 arbitration,
                 latency_status=latency_status,
-                detail=(
-                    "Invalid timing in: " + ", ".join(invalid_sources) + "."
-                ),
+                detail=("Invalid timing in: " + ", ".join(invalid_sources) + "."),
             )
 
         observation_ns = evaluator.observation_timestamp_ns
@@ -363,15 +354,10 @@ class CommandPathObservability:
             )
 
         observation_to_command_ns = command_ns - observation_ns
-        exceeded = [
-            f"evaluator.{name}" for name in evaluator.exceeded_budgets
-        ]
+        exceeded = [f"evaluator.{name}" for name in evaluator.exceeded_budgets]
         if not timing.within_budget:
             exceeded.append("arbitration")
-        if (
-            observation_to_command_ns
-            > self._config.observation_to_command_budget_ns
-        ):
+        if observation_to_command_ns > self._config.observation_to_command_budget_ns:
             exceeded.append("observation_to_command")
         return self._report(
             evaluator,

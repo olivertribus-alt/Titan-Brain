@@ -97,9 +97,7 @@ def test_lateral_clearance_controls_angular_authority() -> None:
 
 
 def test_close_forward_obstacle_blocks_all_swept_motion() -> None:
-    result = DynamicEnvelopeEvaluator().evaluate(
-        _frame(forward=0.30, lateral=5.0)
-    )
+    result = DynamicEnvelopeEvaluator().evaluate(_frame(forward=0.30, lateral=5.0))
 
     assert result.state is EnvelopeState.PROTECTIVE_STOP
     assert result.stop_only is True
@@ -120,9 +118,7 @@ def test_float32_margin_roundoff_clamps_to_absolute_zero() -> None:
 
 
 def test_close_lateral_obstacle_blocks_rotation_but_not_forward_motion() -> None:
-    result = DynamicEnvelopeEvaluator().evaluate(
-        _frame(forward=5.0, lateral=0.30)
-    )
+    result = DynamicEnvelopeEvaluator().evaluate(_frame(forward=5.0, lateral=0.30))
 
     assert result.state is EnvelopeState.LIMITED
     assert result.max_linear_velocity_mps == 1.0
@@ -209,10 +205,7 @@ def test_result_is_immutable_and_bit_deterministic() -> None:
         for _ in range(100)
     ]
     serialized = [result.model_dump_json() for result in results]
-    hashes = {
-        hashlib.sha256(item.encode("utf-8")).hexdigest()
-        for item in serialized
-    }
+    hashes = {hashlib.sha256(item.encode("utf-8")).hexdigest() for item in serialized}
 
     assert all(result == results[0] for result in results)
     assert len(set(serialized)) == 1

@@ -43,9 +43,7 @@ def _evaluator(
         correlation_id=correlation_id,
         decision_id="decision_001",
         outcome="normal",
-        latency_status=(
-            "budget_exceeded" if exceeded_budgets else "within_budget"
-        ),
+        latency_status=("budget_exceeded" if exceeded_budgets else "within_budget"),
         timing_valid=True,
         observation_timestamp_ns=observation_ns,
         published_timestamp_ns=published_ns,
@@ -163,18 +161,10 @@ def test_evaluator_first_correlation_builds_exact_command_path() -> None:
 
 
 def test_arbitration_first_delivery_resolves_all_bounded_pending_samples() -> None:
-    observability = CommandPathObservability(
-        _config(max_pending_per_correlation=2)
-    )
-    assert observability.record_arbitration(
-        _arbitration(published_ns=150)
-    ) == ()
-    assert observability.record_arbitration(
-        _arbitration(published_ns=155)
-    ) == ()
-    assert observability.record_arbitration(
-        _arbitration(published_ns=160)
-    ) == ()
+    observability = CommandPathObservability(_config(max_pending_per_correlation=2))
+    assert observability.record_arbitration(_arbitration(published_ns=150)) == ()
+    assert observability.record_arbitration(_arbitration(published_ns=155)) == ()
+    assert observability.record_arbitration(_arbitration(published_ns=160)) == ()
 
     reports = observability.record_evaluator(_evaluator())
 
@@ -195,9 +185,7 @@ def test_all_exceeded_budgets_are_namespaced_and_preserved() -> None:
         _evaluator(exceeded_budgets=("receive_to_decision", "end_to_end"))
     )
 
-    report = observability.record_arbitration(
-        _arbitration(budget_ns=10)
-    )[0]
+    report = observability.record_arbitration(_arbitration(budget_ns=10))[0]
 
     assert report.latency_status is CommandPathLatencyStatus.BUDGET_EXCEEDED
     assert report.within_budget is False
@@ -221,9 +209,7 @@ def test_invalid_component_timing_keeps_available_stage_evidence() -> None:
     )
     observability.record_evaluator(invalid_evaluator)
 
-    report = observability.record_arbitration(
-        _arbitration("eval_invalid")
-    )[0]
+    report = observability.record_arbitration(_arbitration("eval_invalid"))[0]
 
     assert report.latency_status is CommandPathLatencyStatus.INVALID_TIMING
     assert report.timing_valid is False
@@ -245,10 +231,7 @@ def test_component_and_cross_pipeline_clock_regressions_are_distinct() -> None:
         _arbitration(received_ns=130, published_ns=160)
     )[0]
 
-    assert (
-        component_report.latency_status
-        is CommandPathLatencyStatus.CLOCK_REGRESSION
-    )
+    assert component_report.latency_status is CommandPathLatencyStatus.CLOCK_REGRESSION
     assert cross_report.latency_status is CommandPathLatencyStatus.CLOCK_REGRESSION
     assert cross_report.detail == "Command-path timestamps must be monotonic."
 
@@ -264,9 +247,7 @@ def test_mutation_and_correlation_storage_are_bounded_fail_closed() -> None:
         )
 
     observability.record_evaluator(_evaluator("eval_new"))
-    assert observability.record_arbitration(
-        _arbitration("eval_original")
-    ) == ()
+    assert observability.record_arbitration(_arbitration("eval_original")) == ()
 
     pending = CommandPathObservability(_config(max_correlations=1))
     pending.record_arbitration(_arbitration("pending_old"))

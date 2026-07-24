@@ -158,10 +158,7 @@ def test_recovery_cannot_reach_normal_inside_hysteresis_band() -> None:
 
     assert started.state is SafetyLifecycleState.RECOVERY
     assert completed.state is SafetyLifecycleState.DEGRADED
-    assert (
-        completed.reason
-        is SafetyLifecycleReason.RECOVERY_COMPLETE_DEGRADED
-    )
+    assert completed.reason is SafetyLifecycleReason.RECOVERY_COMPLETE_DEGRADED
 
 
 def test_warning_zone_enters_degraded_without_stopping() -> None:
@@ -346,8 +343,7 @@ def test_results_are_immutable_and_bit_deterministic() -> None:
     ]
     serialized = [result.model_dump_json() for result in results]
     hashes = {
-        hashlib.sha256(payload.encode("utf-8")).hexdigest()
-        for payload in serialized
+        hashlib.sha256(payload.encode("utf-8")).hexdigest() for payload in serialized
     }
 
     assert all(result == results[0] for result in results)

@@ -32,9 +32,7 @@ def config() -> StopMonitorConfig:
     )
 
 
-@pytest.mark.parametrize(
-    "case", standard_fault_cases(), ids=lambda case: case.scenario
-)
+@pytest.mark.parametrize("case", standard_fault_cases(), ids=lambda case: case.scenario)
 def test_standard_fault_matrix_latches_fail_closed(
     case: FaultInjectionCase,
     config: StopMonitorConfig,

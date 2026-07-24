@@ -274,13 +274,9 @@ def _axis_step(
         -limit,
         limit,
     )
-    accel_limited = (
-        increasing
-        and abs(unconstrained_acceleration) > acceleration_limit
-    )
+    accel_limited = increasing and abs(unconstrained_acceleration) > acceleration_limit
     decel_limited = (
-        not increasing
-        and abs(unconstrained_acceleration) > deceleration_limit
+        not increasing and abs(unconstrained_acceleration) > deceleration_limit
     )
 
     max_acceleration_change = jerk_limit * dt_s

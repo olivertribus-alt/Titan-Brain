@@ -248,9 +248,7 @@ def _metrics(
     for result in results:
         dt_s = result.dt_ns / NANOSECONDS_PER_SECOND
         if dt_s > 0.0:
-            jerk = abs(
-                (result.linear_acceleration_mps2 - previous_acceleration) / dt_s
-            )
+            jerk = abs((result.linear_acceleration_mps2 - previous_acceleration) / dt_s)
             max_jerk = max(max_jerk, jerk)
         max_positive_acceleration = max(
             max_positive_acceleration,
@@ -280,8 +278,7 @@ def _scenario_passed(
         return (
             max_acceleration
             <= case.config.max_linear_acceleration_mps2 + METRIC_EPSILON
-            and max_braking
-            <= case.config.max_linear_deceleration_mps2 + METRIC_EPSILON
+            and max_braking <= case.config.max_linear_deceleration_mps2 + METRIC_EPSILON
             and max_braking > max_acceleration
             and math.isclose(final.linear_velocity_mps, 0.0, abs_tol=METRIC_EPSILON)
         )

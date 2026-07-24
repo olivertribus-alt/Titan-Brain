@@ -126,9 +126,7 @@ def _required_finite_parameter(
     minimum_is_valid = checked >= 0.0 if allow_zero else checked > 0.0
     if not math.isfinite(checked) or not minimum_is_valid:
         qualifier = "non-negative" if allow_zero else "positive"
-        raise ValueError(
-            f"ROS parameter {name!r} must be finite and {qualifier}"
-        )
+        raise ValueError(f"ROS parameter {name!r} must be finite and {qualifier}")
     return checked
 
 
@@ -175,9 +173,7 @@ def _safety_intent_state(result: RosObservationProcessingResult) -> int:
             EvaluatorState.OK: SafetyIntentMsg.STATE_NORMAL,
             EvaluatorState.WARNING: SafetyIntentMsg.STATE_WARNING,
             EvaluatorState.E_STOP: SafetyIntentMsg.STATE_E_STOP,
-            EvaluatorState.RECOVERY_HOLDING: (
-                SafetyIntentMsg.STATE_RECOVERY_HOLDING
-            ),
+            EvaluatorState.RECOVERY_HOLDING: (SafetyIntentMsg.STATE_RECOVERY_HOLDING),
         }[transition.state]
 
     effective = result.decision
@@ -214,12 +210,8 @@ class SafetyObservationNode(Node):
         watchdog_timeout_sec = float(
             self.declare_parameter("watchdog_timeout_sec", 0.5).value
         )
-        timer_period_sec = float(
-            self.declare_parameter("timer_period_sec", 0.05).value
-        )
-        tf_timeout_sec = float(
-            self.declare_parameter("tf_timeout_sec", 0.05).value
-        )
+        timer_period_sec = float(self.declare_parameter("timer_period_sec", 0.05).value)
+        tf_timeout_sec = float(self.declare_parameter("tf_timeout_sec", 0.05).value)
         incident_store_path = str(
             self.declare_parameter(
                 "incident_store_path",
@@ -453,9 +445,8 @@ class SafetyObservationNode(Node):
 
     @staticmethod
     def _message_timestamp_ns(message: ObservationMessage) -> int:
-        return (
-            int(message.header.stamp.sec) * 1_000_000_000
-            + int(message.header.stamp.nanosec)
+        return int(message.header.stamp.sec) * 1_000_000_000 + int(
+            message.header.stamp.nanosec
         )
 
     def _transform_pose(
@@ -524,9 +515,7 @@ class SafetyObservationNode(Node):
             float(message.velocity.angular.y),
         )
         if any(component != 0.0 for component in ignored_velocity_components):
-            raise ValueError(
-                "Directional observation contains unsupported 3D velocity"
-            )
+            raise ValueError("Directional observation contains unsupported 3D velocity")
         payload = self._normalized_payload(message, pose, frame_id)
         payload["directional_data"] = {
             "clearances": {
@@ -642,14 +631,8 @@ class SafetyObservationNode(Node):
             max_linear_y_mps=0.0,
             max_abs_angular_z_radps=0.0,
         )
-        observation = (
-            result.adaptation.observation if result is not None else None
-        )
-        directional = (
-            observation.directional_data
-            if observation is not None
-            else None
-        )
+        observation = result.adaptation.observation if result is not None else None
+        directional = observation.directional_data if observation is not None else None
         if directional is not None:
             try:
                 limits = calculate_directional_motion_envelope(
@@ -734,9 +717,7 @@ class SafetyObservationNode(Node):
             else effective.decision.action
         )
         status.effective_action = effective.decision.action
-        status.recovery_active = (
-            transition.state is EvaluatorState.RECOVERY_HOLDING
-        )
+        status.recovery_active = transition.state is EvaluatorState.RECOVERY_HOLDING
         status.hold_elapsed_ns = transition.hold_elapsed_ns or 0
         status.recovery_hold_time_ns = config.recovery_hold_time_ns
         status.has_release_threshold = transition.release_threshold_m is not None
@@ -871,9 +852,7 @@ class SafetyObservationNode(Node):
             in {WatchdogStatus.TIMED_OUT, WatchdogStatus.CLOCK_REGRESSION}
             and watchdog.status is not self._watchdog_stop_status
         ):
-            correlation_id = (
-                f"watchdog_{watchdog.status.value}_{now.nanoseconds}"
-            )
+            correlation_id = f"watchdog_{watchdog.status.value}_{now.nanoseconds}"
             self._publish_safety_intent(
                 now,
                 state=SafetyIntentMsg.STATE_E_STOP,

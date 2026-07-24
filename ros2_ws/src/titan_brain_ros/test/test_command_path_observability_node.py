@@ -48,9 +48,7 @@ def _evaluator_status(
     message.correlation_id = correlation_id
     message.decision_id = "decision_001"
     message.outcome = "normal"
-    message.latency_status = (
-        "within_budget" if timing_valid else "invalid_timestamp"
-    )
+    message.latency_status = "within_budget" if timing_valid else "invalid_timestamp"
     message.timing_valid = timing_valid
     message.within_budget = timing_valid
     if timing_valid:

@@ -80,9 +80,7 @@ def _finite_float_parameter(
     lower_bound_ok = checked >= 0.0 if allow_zero else checked > 0.0
     if not math.isfinite(checked) or not lower_bound_ok:
         qualifier = "non-negative" if allow_zero else "positive"
-        raise ValueError(
-            f"ROS parameter {name!r} must be finite and {qualifier}"
-        )
+        raise ValueError(f"ROS parameter {name!r} must be finite and {qualifier}")
     return checked
 
 
@@ -108,9 +106,8 @@ def _seconds_to_ns(seconds: float, *, name: str) -> int:
 
 
 def _stamp_ns(message: LaserScan | SystemFaultStatus) -> int:
-    return (
-        int(message.header.stamp.sec) * NANOSECONDS_PER_SECOND
-        + int(message.header.stamp.nanosec)
+    return int(message.header.stamp.sec) * NANOSECONDS_PER_SECOND + int(
+        message.header.stamp.nanosec
     )
 
 
@@ -373,9 +370,7 @@ class DynamicEnvelopeNode(Node):
         return {
             SystemFaultStatus.FAULT_OK: None,
             SystemFaultStatus.FAULT_E_STOP_ACTIVE: "SYSTEM_FAULT_E_STOP_ACTIVE",
-            SystemFaultStatus.FAULT_HARDWARE_FAULT: (
-                "SYSTEM_FAULT_HARDWARE_FAULT"
-            ),
+            SystemFaultStatus.FAULT_HARDWARE_FAULT: ("SYSTEM_FAULT_HARDWARE_FAULT"),
             SystemFaultStatus.FAULT_LATCHED_SAFETY_FAULT: (
                 "SYSTEM_FAULT_LATCHED_SAFETY_FAULT"
             ),
@@ -474,9 +469,7 @@ class DynamicEnvelopeNode(Node):
         diagnostics.sequence_id = self._sequence_id
         diagnostics.state = {
             EnvelopeState.FAIL_CLOSED: EnvelopeDiagnostics.STATE_FAIL_CLOSED,
-            EnvelopeState.PROTECTIVE_STOP: (
-                EnvelopeDiagnostics.STATE_PROTECTIVE_STOP
-            ),
+            EnvelopeState.PROTECTIVE_STOP: (EnvelopeDiagnostics.STATE_PROTECTIVE_STOP),
             EnvelopeState.LIMITED: EnvelopeDiagnostics.STATE_LIMITED,
             EnvelopeState.NOMINAL: EnvelopeDiagnostics.STATE_NOMINAL,
         }[result.state]
@@ -493,27 +486,15 @@ class DynamicEnvelopeNode(Node):
         diagnostics.fault_status_valid = fault_rejection is None
         diagnostics.scan_age_sec = scan_age_s
         diagnostics.distance_forward_m = (
-            result.distance_forward_m
-            if result.distance_forward_m is not None
-            else -1.0
+            result.distance_forward_m if result.distance_forward_m is not None else -1.0
         )
         diagnostics.distance_lateral_m = (
-            result.distance_lateral_m
-            if result.distance_lateral_m is not None
-            else -1.0
+            result.distance_lateral_m if result.distance_lateral_m is not None else -1.0
         )
-        diagnostics.linear_stopping_distance_m = (
-            result.linear_stopping_distance_m
-        )
-        diagnostics.angular_stopping_distance_m = (
-            result.angular_stopping_distance_m
-        )
-        diagnostics.max_linear_velocity_mps = (
-            result.max_linear_velocity_mps
-        )
-        diagnostics.max_angular_velocity_radps = (
-            result.max_angular_velocity_radps
-        )
+        diagnostics.linear_stopping_distance_m = result.linear_stopping_distance_m
+        diagnostics.angular_stopping_distance_m = result.angular_stopping_distance_m
+        diagnostics.max_linear_velocity_mps = result.max_linear_velocity_mps
+        diagnostics.max_angular_velocity_radps = result.max_angular_velocity_radps
         self._diagnostics_publisher.publish(diagnostics)
         self._last_envelope = envelope
         self._last_diagnostics = diagnostics
