@@ -102,6 +102,24 @@ def test_broadcast_delivers_only_to_subscribers() -> None:
     assert received == [0.8]
 
 
+def test_targeted_delivery_success() -> None:
+    bus = CognitiveBus()
+    received: list[float] = []
+
+    async def handler(message: CognitiveMessage[BasePayload]) -> None:
+        assert isinstance(message.payload, AnalysisPayload)
+        received.append(message.payload.score)
+
+    target_id = _module_id("TargetModule")
+    bus.register_module(target_id, _capability(), handler)
+
+    report = asyncio.run(bus.send(_incoming(target_id)))
+
+    assert report.delivered_to == (target_id,)
+    assert report.failures == ()
+    assert received == [0.8]
+
+
 def test_targeted_delivery_rejects_non_consumer() -> None:
     bus = CognitiveBus()
 
@@ -112,6 +130,15 @@ def test_targeted_delivery_rejects_non_consumer() -> None:
 
     with pytest.raises(InvalidDestinationError):
         asyncio.run(bus.send(_incoming(_module_id("OtherModule"))))
+
+
+def test_targeted_delivery_rejects_unregistered_module() -> None:
+    bus = CognitiveBus()
+    async def handler(message: CognitiveMessage[BasePayload]) -> None:
+        pass
+    bus.register_module(_module_id("Dummy"), _capability(), handler)
+    with pytest.raises(InvalidDestinationError):
+        asyncio.run(bus.send(_incoming(_module_id("NonExistent"))))
 
 
 def test_unknown_payload_type_is_rejected() -> None:
@@ -149,3 +176,14 @@ def test_broadcast_reports_handler_failure_without_stopping_delivery() -> None:
     assert report.delivered_to == (_module_id("Bravo"),)
     assert report.failures[0].module_id == _module_id("Alpha")
     assert received == [0.8]
+
+
+def test_module_unregister() -> None:
+    bus = CognitiveBus()
+
+    async def handler(message: CognitiveMessage[BasePayload]) -> None:
+        pass
+
+    mod_id = _module_id("TempModule")
+    bus.register_module(mod_id, _capability(), handler)
+    bus.unregister_module(mod_id)
