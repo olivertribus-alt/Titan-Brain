@@ -27,23 +27,16 @@ setup(
     tests_require=["pytest"],
     entry_points={
         "console_scripts": [
-            (
-                "safety_velocity_arbiter_node = "
-                "titan_brain_ros.safety_velocity_arbiter_node:main"
-            ),
-            (
-                "dynamic_motion_envelope_node = "
-                "titan_brain_ros.dynamic_motion_envelope_node:main"
-            ),
-            (
-                "safety_recovery_manager_node = "
-                "titan_brain_ros.safety_recovery_manager_node:main"
-            ),
-            ("telemetry_blackbox_node = titan_brain_ros.telemetry_blackbox_node:main"),
-            (
-                "multi_sensor_envelope_node = "
-                "titan_brain_ros.multi_sensor_envelope_node:main"
-            ),
+            "safety_observation_node = titan_brain_ros.safety_observation_node:main",
+            "safety_loop_supervisor_node = titan_brain_ros.safety_loop_supervisor_node:main",
+            "safety_velocity_arbiter_node = titan_brain_ros.safety_velocity_arbiter_node:main",
+            "dynamic_motion_envelope_node = titan_brain_ros.dynamic_motion_envelope_node:main",
+            "safety_recovery_manager_node = titan_brain_ros.safety_recovery_manager_node:main",
+            "telemetry_blackbox_node = titan_brain_ros.telemetry_blackbox_node:main",
+            "actuator_feedback_monitor_node = titan_brain_ros.actuator_feedback_monitor_node:main",
+            "command_governor_node = titan_brain_ros.command_governor_node:main",
+            "command_path_observability_node = titan_brain_ros.command_path_observability_node:main",
+            "multi_sensor_envelope_node = titan_brain_ros.multi_sensor_envelope_node:main",
         ],
     },
 )
