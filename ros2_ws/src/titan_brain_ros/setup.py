@@ -14,7 +14,10 @@ setup(
         ("share/" + package_name, ["package.xml"]),
         (
             "share/" + package_name + "/launch",
-            ["launch/safety_control_plane.launch.py"],
+            [
+                "launch/safety_control_plane.launch.py",
+                "launch/titan_brain.launch.py",
+            ],
         ),
         ("share/" + package_name + "/config", ["config/titan_brain.yaml"]),
     ],
