@@ -137,3 +137,11 @@ safety_recovery_manager_node:
     degraded_angular_speed_limit_radps: 0.50
     recovery_linear_speed_limit_mps: 0.20
     recovery_angular_speed_limit_radps: 0.50
+
+telemetry_blackbox_node:
+  ros__parameters:
+    policy_version: "TB-EVAL-009B-0.1.0"
+    timer_period_sec: 0.02
+    capacity_frames: 500
+    post_trigger_frames: 50
+    snapshot_output_directory: "/tmp/titan_brain_blackbox"

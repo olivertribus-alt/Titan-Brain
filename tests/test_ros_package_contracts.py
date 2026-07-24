@@ -392,6 +392,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
         "launch_testing_ros",
         "rclpy",
         "sensor_msgs",
+        "std_srvs",
         "tf2_ros",
         "titan_brain_msgs",
     } <= dependencies
@@ -409,6 +410,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert "titan_brain_ros.safety_velocity_arbiter_node:main" in setup
     assert "titan_brain_ros.dynamic_envelope_node:main" in setup
     assert "titan_brain_ros.safety_recovery_manager_node:main" in setup
+    assert "titan_brain_ros.telemetry_blackbox_node:main" in setup
     assert (package / "resource" / "titan_brain_ros").is_file()
     assert (
         package / "titan_brain_ros" / "safety_observation_node.py"
@@ -437,6 +439,9 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert (
         package / "titan_brain_ros" / "safety_recovery_manager_node.py"
     ).is_file()
+    assert (
+        package / "titan_brain_ros" / "telemetry_blackbox_node.py"
+    ).is_file()
     shared_config = package / "config" / "titan_brain.yaml"
     launch_file = package / "launch" / "titan_brain.launch.py"
     e2e_test = package / "test" / "test_e2e_transport.py"
@@ -459,6 +464,7 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert 'executable="safety_velocity_arbiter_node"' in safety_launch_text
     assert 'executable="dynamic_envelope_node"' in safety_launch_text
     assert 'executable="safety_recovery_manager_node"' in safety_launch_text
+    assert 'executable="telemetry_blackbox_node"' in safety_launch_text
     assert 'executable="velocity_arbiter_node"' not in safety_launch_text
     assert 'executable="command_governor_node"' not in safety_launch_text
     assert '{"publish_motion_envelope": False}' in safety_launch_text
@@ -544,6 +550,9 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
         "degraded_angular_speed_limit_radps",
         "recovery_linear_speed_limit_mps",
         "recovery_angular_speed_limit_radps",
+        "capacity_frames",
+        "post_trigger_frames",
+        "snapshot_output_directory",
         "arbitration_latency_budget_sec",
         "policy_version",
     ):
@@ -580,6 +589,12 @@ def test_node_package_declares_runtime_dependencies_and_entry_point() -> None:
     assert (
         _float_parameter(config_text, "recovery_linear_speed_limit_mps")
         == 0.20
+    )
+    assert "capacity_frames: 500" in config_text
+    assert "post_trigger_frames: 50" in config_text
+    assert (
+        'snapshot_output_directory: "/tmp/titan_brain_blackbox"'
+        in config_text
     )
     assert _float_parameter(config_text, "observation_to_command_budget_sec") == 0.10
     assert '"config/titan_brain.yaml"' in setup
@@ -641,3 +656,24 @@ def test_tb_eval_008c_fault_injection_gate_is_complete() -> None:
     assert "_CHAIN_STOP_BUDGET_NS = 250_000_000" in integration_test
     assert "test_fault_injection_suite" in integration_test
     assert "Fault Injection and Safety Validation Gate" in documentation
+
+
+def test_tb_eval_009b_blackbox_gate_is_complete() -> None:
+    package = ROS_SOURCE / "titan_brain_ros"
+    node_test = (
+        package / "test" / "test_telemetry_blackbox_node.py"
+    ).read_text(encoding="utf-8")
+    documentation = (REPOSITORY_ROOT / "TB-EVAL-009B.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "test_emergency_transition_freezes_exact_post_window" in node_test
+    assert "test_hard_fault_has_trigger_priority" in node_test
+    assert "test_manual_service_trigger_exports" in node_test
+    assert "test_clock_regression_is_clamped_and_captured" in node_test
+    assert "test_initial_emergency_state_does_not_create_false_transition" in (
+        node_test
+    )
+    assert "High-Frequency Telemetry & Diagnostic Blackbox" in documentation
+    assert "O(1) append" in documentation
+    assert "/safety/telemetry_blackbox/trigger" in documentation
