@@ -3,9 +3,11 @@ Titan Brain - TB-EVAL-009C: Multi-Sensor Fusion Envelope Evaluator
 Guarantees O(1) worst-case safety envelope union across heterogenous sensors with fail-closed timeout guards.
 """
 
+from __future__ import annotations
+
 import time
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Set
 
 
 @dataclass(frozen=True)
@@ -52,7 +54,7 @@ class MultiSensorEnvelopeEvaluator:
         self.max_sensors = max_sensors
         
         self._readings: Dict[str, SensorReading] = {}
-        self._critical_sensors: set[str] = set()
+        self._critical_sensors: Set[str] = set()
 
     def register_critical_sensor(self, sensor_id: str) -> None:
         """Explicitly register a sensor ID as critical for safety system."""
