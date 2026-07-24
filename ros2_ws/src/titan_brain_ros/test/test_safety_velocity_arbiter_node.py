@@ -247,7 +247,13 @@ def test_recovery_lifecycle_cap_is_enforced_on_final_command() -> None:
     try:
         now_ns = _set_test_time(node)
         node._on_fault_status(_fault(SystemFaultStatus.FAULT_OK, now_ns))
-        node._on_motion_envelope(_envelope(now_ns, max_linear_x=1.0))
+        node._on_motion_envelope(
+            _envelope(
+                now_ns,
+                max_linear_x=1.0,
+                max_angular_z=1.0,
+            )
+        )
         node._on_lifecycle_status(
             _lifecycle(
                 now_ns,
