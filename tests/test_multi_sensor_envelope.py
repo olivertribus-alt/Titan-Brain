@@ -25,10 +25,13 @@ def test_critical_sensor_stale_triggers_emergency() -> None:
     evaluator = MultiSensorEnvelopeEvaluator(stale_timeout_s=0.200)
     now = 1000.0
 
-    evaluator.update_sensor(SensorReading("lidar_primary", 3.0, now, is_critical=True))
-    evaluator.update_sensor(SensorReading("sonar_aux", 1.5, now, is_critical=False))
+    evaluator.update_sensor(
+        SensorReading("lidar_primary", 3.0, now, is_critical=True)
+    )
+    evaluator.update_sensor(
+        SensorReading("sonar_aux", 1.5, now, is_critical=False)
+    )
 
-    # Advance time by 0.3s -> lidar_primary becomes stale
     future = now + 0.300
     res = evaluator.evaluate_fusion(future)
 
@@ -44,10 +47,10 @@ def test_low_confidence_filtering() -> None:
 
     evaluator.update_sensor(
         SensorReading("sonar", 0.5, now, confidence=0.3)
-    )  # Rejected
+    )
     evaluator.update_sensor(
         SensorReading("lidar", 2.0, now, confidence=0.9)
-    )  # Accepted
+    )
 
     res = evaluator.evaluate_fusion(now)
     assert not res.is_emergency

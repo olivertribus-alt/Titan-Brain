@@ -1,15 +1,15 @@
-"""
-ROS 2 Multi-Sensor Fusion Envelope Node for Titan Brain (TB-EVAL-009C)
-"""
+"""ROS 2 Multi-Sensor Fusion Envelope Node for Titan Brain (TB-EVAL-009C)."""
 
 import time
 
 import rclpy
+from core.multi_sensor_envelope import (
+    MultiSensorEnvelopeEvaluator,
+    SensorReading,
+)
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Float32, String
-
-from core.multi_sensor_envelope import MultiSensorEnvelopeEvaluator, SensorReading
 
 
 class MultiSensorEnvelopeNode(Node):
@@ -31,25 +31,26 @@ class MultiSensorEnvelopeNode(Node):
             min_confidence=min_conf,
         )
 
-        # Default critical sensor registration
         self.evaluator.register_critical_sensor("lidar_front")
 
-        # Subscriptions
         self.scan_sub = self.create_subscription(
             LaserScan, "/scan", self._scan_callback, 10
         )
 
-        # Publishers
         self.fused_dist_pub = self.create_publisher(
             Float32, "/safety/fused_min_distance", 10
         )
-        self.diag_pub = self.create_publisher(String, "/safety/fusion_diagnostics", 10)
+        self.diag_pub = self.create_publisher(
+            String, "/safety/fusion_diagnostics", 10
+        )
 
         timer_period = 1.0 / rate_hz
         self.timer = self.create_timer(timer_period, self._evaluate_loop)
 
     def _scan_callback(self, msg: LaserScan) -> None:
-        valid_ranges = [r for r in msg.ranges if msg.range_min <= r <= msg.range_max]
+        valid_ranges = [
+            r for r in msg.ranges if msg.range_min <= r <= msg.range_max
+        ]
         min_dist = min(valid_ranges) if valid_ranges else float("inf")
 
         now_s = time.time()
@@ -73,8 +74,10 @@ class MultiSensorEnvelopeNode(Node):
 
         diag_msg = String()
         diag_msg.data = (
-            f"emergency={result.is_emergency} | fused_d={result.fused_distance_m:.2f}m | "
-            f"strictest={result.strictest_sensor_id} | active={result.active_sensors_count}"
+            f"emergency={result.is_emergency} | "
+            f"fused_d={result.fused_distance_m:.2f}m | "
+            f"strictest={result.strictest_sensor_id} | "
+            f"active={result.active_sensors_count}"
         )
         self.diag_pub.publish(diag_msg)
 
